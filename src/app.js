@@ -8,11 +8,22 @@ const app = express();
 
 const allowlist = (process.env.CORS_ORIGIN || "")
   .split(",")
-  .map((value) => value.trim())
+  .map((value) =>
+    value
+      .trim()
+      .replace(/^['"]/, "")
+      .replace(/['"]$/, "")
+  )
   .filter(Boolean);
+const allowAll = allowlist.includes("*");
 
 app.use(helmet());
-app.use(cors({ origin: allowlist.length ? allowlist : true }));
+app.use(
+  cors({
+    origin: allowAll ? true : allowlist.length ? allowlist : true,
+    credentials: true,
+  })
+);
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("combined"));
 
