@@ -18,12 +18,13 @@ const allowlist = (process.env.CORS_ORIGIN || "")
 const allowAll = allowlist.includes("*");
 
 app.use(helmet());
-app.use(
-  cors({
-    origin: allowAll ? true : allowlist.length ? allowlist : true,
-    credentials: true,
-  })
-);
+const corsOptions = {
+  origin: allowAll ? true : allowlist.length ? allowlist : true,
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("combined"));
 
