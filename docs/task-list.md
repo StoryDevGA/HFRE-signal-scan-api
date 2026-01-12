@@ -1,8 +1,8 @@
 # API Task List (HFRE Signal Scan)
 
 1) Bootstrap Express app, config, and middleware (Helmet, CORS, logging, JSON limits). (done)
-2) Add env vars for MongoDB, LLM provider, email provider, admin allowlist/hash.
-3) Build Zod/Joi schemas for public input, admin auth, prompt CRUD, and LLM output.
+2) Add env vars for MongoDB, LLM provider, email provider, admin allowlist/hash. (done)
+3) Build Zod/Joi schemas for public input, admin auth, prompt CRUD, and LLM output. (done)
 4) Create Mongoose models: submissions, prompts, analytics, adminAudit with indexes.
 5) Seed initial system and user prompts from HFRE-Signal-scan V4 Agents.json.
 6) Implement prompt service with one-active-per-type guard.
