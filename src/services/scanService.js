@@ -2,6 +2,7 @@ const { Submission } = require("../models");
 const { llmOutputSchema } = require("../validators/schemas");
 const { getActivePrompt } = require("./promptService");
 const { runScanAgent } = require("./scanAgent");
+const { sendCustomerEmail, sendOwnerEmail } = require("./emailService");
 
 function extractAgentOutput(result) {
   if (!result) {
@@ -25,6 +26,52 @@ function parseMaybeJson(value) {
   } catch (error) {
     return value;
   }
+}
+
+async function sendCompletionEmails(submission) {
+  const emailStatus = submission.emailStatus || {};
+  const errors = [];
+
+  if (!emailStatus.customerSentAt) {
+    try {
+      await sendCustomerEmail({
+        to: submission.inputs.email,
+        company: submission.outputs.company,
+        customerReport: submission.outputs.customer_report,
+      });
+      emailStatus.customerSentAt = new Date();
+    } catch (error) {
+      errors.push(error.message || "Customer email failed.");
+    }
+  }
+
+  if (!emailStatus.ownerSentAt) {
+    try {
+      await sendOwnerEmail({
+        contactName: submission.inputs.name,
+        contactEmail: submission.inputs.email,
+        companyName: submission.inputs.company_name,
+        homepageUrl: submission.inputs.homepage_url,
+        productName: submission.inputs.product_name,
+        productPageUrl: submission.inputs.product_page_url,
+        confidenceLevel: submission.outputs.metadata?.confidence_level,
+        customerReport: submission.outputs.customer_report,
+        internalReport: submission.outputs.internal_report,
+      });
+      emailStatus.ownerSentAt = new Date();
+    } catch (error) {
+      errors.push(error.message || "Owner email failed.");
+    }
+  }
+
+  if (errors.length) {
+    emailStatus.lastError = errors.join(" | ");
+  } else {
+    emailStatus.lastError = undefined;
+  }
+
+  submission.emailStatus = emailStatus;
+  await submission.save();
 }
 
 async function processSubmission(submissionId) {
@@ -78,6 +125,7 @@ async function processSubmission(submissionId) {
     };
     submission.failure = undefined;
     await submission.save();
+    await sendCompletionEmails(submission);
   } catch (error) {
     submission.status = "failed";
     submission.failure = {
