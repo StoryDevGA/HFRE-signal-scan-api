@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const express = require("express");
 const helmet = require("helmet");
 const morgan = require("morgan");
@@ -29,9 +30,22 @@ app.use((req, res, next) => {
   return next();
 });
 
+app.use((req, res, next) => {
+  const requestId = req.headers["x-request-id"] || crypto.randomUUID();
+  req.requestId = requestId;
+  res.setHeader("X-Request-Id", requestId);
+  next();
+});
+
+morgan.token("request-id", (req) => req.requestId);
+
 app.use(helmet());
 app.use(express.json({ limit: "1mb" }));
-app.use(morgan("combined"));
+app.use(
+  morgan(
+    ":remote-addr - :method :url :status :res[content-length] - :response-time ms :request-id"
+  )
+);
 
 app.use(healthRoutes);
 app.use("/api/public", publicRoutes);

@@ -10,11 +10,11 @@
 8) Implement POST /api/public/scans with validation, analytics capture, pending submission, async scan. (done)
 9) Implement LLM execution worker/service and update submission status on completion or failure. (done)
 10) Implement email sender for customer and internal notifications with status persistence. (done)
-11) Implement GET /api/public/results/:publicId with pending/complete/failed responses.
-12) Implement admin auth endpoints with allowlist, bcrypt hash, session cookie, rate limit.
-13) Implement admin submissions endpoints (list, detail, delete).
-14) Implement admin prompts endpoints (list, create, update, delete guard).
-15) Implement admin analytics endpoints (aggregate + per-submission).
-16) Implement admin user deletion by email endpoint.
-17) Add /health endpoint and structured logging with requestId.
-18) Add tests for validation, prompt interpolation, and submission lifecycle.
+11) Implement GET /api/public/results/:publicId with pending/complete/failed responses. (done)
+12) Implement admin auth endpoints with allowlist, bcrypt hash, session cookie, rate limit. (done)
+13) Implement admin submissions endpoints (list, detail, delete). (done)
+14) Implement admin prompts endpoints (list, create, update, delete guard). (done)
+15) Implement admin analytics endpoints (aggregate + per-submission). (done)
+16) Implement admin user deletion by email endpoint. (done)
+17) Add /health endpoint and structured logging with requestId. (done)
+18) Add tests for validation, prompt interpolation, and submission lifecycle. (done)

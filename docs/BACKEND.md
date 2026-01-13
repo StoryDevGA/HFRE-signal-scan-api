@@ -1,15 +1,15 @@
-# BACKEND.md — HFRE Signal Scan (Free Taster)
+# BACKEND.md - HFRE Signal Scan (Free Taster)
 
 ## 1. Purpose
 
 Implement a Node/Express backend that:
 1) Accepts form submissions (Company Signal Scan).  
-2) Runs the “Signal Scan Agent” (LLM call) to produce a strict JSON output.  
+2) Runs the Signal Scan Agent (LLM call) to produce a strict JSON output.  
 3) Stores inputs, outputs, and telemetry in MongoDB.  
 4) Emails the customer a copy and notifies business owners.  
 5) Provides a restricted Admin API (max 3 admins) for dashboard operations.
 
-The agent workflow to mirror is **Start (form) → Signal Scan LLM Agent → JSON output**, as defined by the AgentFlow JSON. fileciteturn4file4
+The agent workflow to mirror is **Start (form) -> Signal Scan LLM Agent -> JSON output**, as defined by the AgentFlow JSON. 
 
 ---
 
@@ -17,19 +17,20 @@ The agent workflow to mirror is **Start (form) → Signal Scan LLM Agent → JSO
 
 - Node.js + Express
 - MongoDB (Mongoose)
-- Email provider: Resend / SendGrid / Nodemailer (select one)
-- LLM provider: OpenAI or other (LLM-agnostic interface recommended)
+- Email provider: Resend (current)
+- LLM provider: LangChain initChatModel (LLM-agnostic)
 - Security:
   - Helmet
-  - CORS allowlist
-  - Rate limiting (public endpoints)
-  - Input validation (Zod/Joi)
+  - CORS (origin echo + credentials)
+  - Rate limiting (admin login)
+  - Input validation (Zod)
+  - Session cookie auth (in-memory)
 
 ---
 
 ## 3. Agent Output Contract (Strict)
 
-The LLM must return **one JSON object** with this shape (do not output anything else): fileciteturn4file14
+The LLM must return **one JSON object** with this shape (do not output anything else): 
 
 ```json
 {
@@ -51,6 +52,7 @@ Backend responsibilities:
 - Validate the returned JSON strictly (schema validation).
 - If invalid, mark submission as `failed` and persist the raw response for debugging (admin-only).
 - Ensure `customer_report` is safe for public display and email (per prompt constraints).
+- Model output may arrive as a string; parse JSON before validation.
 
 ---
 
@@ -86,6 +88,9 @@ Fields:
   - `ownerSentAt`
   - `lastError`
 - `createdAt`, `updatedAt`
+- `failure`:
+  - `message`
+  - `rawOutput` (optional)
 
 Indexes:
 - `publicId` unique
@@ -144,12 +149,12 @@ Requirement:
 Implementation approach:
 - ENV:
   - `ADMIN_EMAILS` = comma-separated list of up to 3 emails
-  - `ADMIN_PASSWORD_HASH` = bcrypt hash of the fixed password
+  - `ADMIN_PASSWORD_HASH` = bcrypt hash of the fixed password (bcryptjs)
 - Login endpoint checks:
   1) email is in allowlist
   2) password matches bcrypt hash
 - On success:
-  - issue httpOnly cookie session (recommended) OR JWT in httpOnly cookie
+  - issue httpOnly cookie session (in-memory store)
 - No admin self-service registration.
 
 Security notes:
@@ -202,6 +207,11 @@ Persist:
 - `emailStatus.customerSentAt`
 - `emailStatus.ownerSentAt`
 - `emailStatus.lastError` (if any)
+Email failures do not change submission status; they are recorded in `emailStatus.lastError`.
+Provider config (current):
+- `RESEND_API_KEY`
+- `EMAIL_FROM`
+- `EMAIL_TO_OWNERS` (comma-separated)
 
 ---
 
@@ -222,7 +232,7 @@ Validations:
 Response variants:
 - `200` complete: returns public result model (no internal_report)
 - `202` pending: `{ status: "pending" }`
-- `404` not found
+- `404` not found: `{ status: "not_found" }`
 - `500` failed: `{ status: "failed" }` (do not leak internal details)
 
 ### 8.2 Admin Auth API
@@ -250,7 +260,7 @@ Returns full submission:
 - outputs (including internal_report)
 - metadata
 - email status
-- analytics (joined or separate call)
+- analytics (joined in response)
 
 #### `DELETE /api/admin/submissions/:id`
 Deletes submission and associated analytics.
@@ -267,7 +277,7 @@ Creates a new prompt.
 Edits prompt fields.
 
 #### `DELETE /api/admin/prompts/:id`
-Deletes prompt (block deleting currently-active prompt unless switching first).
+Deletes prompt (block deleting currently-active prompt).
 
 ### 8.5 Admin User Data Deletion
 
@@ -290,15 +300,326 @@ Returns telemetry record for that submission.
 
 ---
 
+## 8.7 Frontend Contract (Use This)
+
+### Base URL
+- Local dev: `http://localhost:8000`
+- All endpoints are under `/api`.
+
+### CORS and Cookies
+- CORS echoes the request origin and allows credentials.
+- Admin auth uses an httpOnly cookie named `admin_session`.
+- When calling admin endpoints from the browser, send credentials.
+
+### Public: Submit Scan
+Request:
+```
+POST /api/public/scans
+Content-Type: application/json
+{
+  "name": "string",
+  "email": "string",
+  "company_name": "string",
+  "homepage_url": "string",
+  "product_name": "string",
+  "product_page_url": "string"
+}
+```
+Response:
+```
+201
+{
+  "publicId": "string"
+}
+```
+Validation errors:
+```
+400
+{
+  "errors": [
+    { "path": "email", "message": "string" }
+  ]
+}
+```
+
+### Public: Poll Result
+Request:
+```
+GET /api/public/results/:publicId
+```
+Responses:
+```
+202
+{ "status": "pending" }
+```
+```
+200
+{
+  "status": "complete",
+  "publicId": "string",
+  "company": "string",
+  "customer_report": "string",
+  "metadata": {
+    "confidence_level": "High|Medium|Low",
+    "source_scope": "Public website only",
+    "shareability": {
+      "customer_safe": true,
+      "internal_only": true
+    }
+  }
+}
+```
+```
+404
+{ "status": "not_found" }
+```
+```
+500
+{ "status": "failed" }
+```
+
+### Admin: Login
+Request:
+```
+POST /api/admin/auth/login
+Content-Type: application/json
+{
+  "email": "string",
+  "password": "string"
+}
+```
+Response:
+```
+200
+{ "ok": true }
+```
+Error:
+```
+401
+{ "error": "Invalid credentials." }
+```
+
+### Admin: Logout
+Request:
+```
+POST /api/admin/auth/logout
+```
+Response:
+```
+200
+{ "ok": true }
+```
+
+### Admin: List Submissions
+Request:
+```
+GET /api/admin/submissions?q=string&status=pending|complete|failed&page=1&pageSize=20
+```
+Response:
+```
+200
+{
+  "items": [ "submission" ],
+  "page": 1,
+  "pageSize": 20,
+  "total": 0,
+  "totalPages": 0
+}
+```
+
+### Admin: Submission Detail
+Request:
+```
+GET /api/admin/submissions/:id
+```
+Response:
+```
+200
+{
+  "submission": { "publicId": "string", "inputs": {}, "outputs": {}, "emailStatus": {}, "promptRefs": {} },
+  "analytics": { "submissionId": "string", "ipAddress": "string", "userAgent": "string" }
+}
+```
+
+### Admin: Delete Submission
+Request:
+```
+DELETE /api/admin/submissions/:id
+```
+Response:
+```
+200
+{ "ok": true }
+```
+
+### Admin: Prompts
+List:
+```
+GET /api/admin/prompts
+```
+Create:
+```
+POST /api/admin/prompts
+Content-Type: application/json
+{
+  "type": "system|user",
+  "name": "string",
+  "content": "string",
+  "active": true,
+  "version": 1
+}
+```
+Update:
+```
+PUT /api/admin/prompts/:id
+Content-Type: application/json
+{ "name": "string", "content": "string", "active": true, "version": 2 }
+```
+Delete:
+```
+DELETE /api/admin/prompts/:id
+```
+Delete error:
+```
+400
+{ "error": "Disable active prompt before deleting." }
+```
+
+### Admin: Analytics
+Summary:
+```
+GET /api/admin/analytics
+```
+Response:
+```
+200
+{
+  "totals": { "total": 0, "pending": 0, "complete": 0, "failed": 0, "conversionRate": 0 },
+  "countsByDay": [ { "date": "YYYY-MM-DD", "count": 0 } ],
+  "topBrowsers": [ { "key": "Chrome", "count": 0 } ],
+  "topDevices": [ { "key": "Desktop", "count": 0 } ]
+}
+```
+Per-submission:
+```
+GET /api/admin/analytics/:submissionId
+```
+
+### Admin: Delete User Data
+Request:
+```
+DELETE /api/admin/users/:email
+```
+Response:
+```
+200
+{ "deletedSubmissions": 0 }
+```
+
+### Error Shapes (General)
+- Validation: `{ "errors": [ { "path": "string", "message": "string" } ] }`
+- Server errors: `{ "error": "string" }`
+
+---
+
+## 8.8 React (JS) Example
+
+```jsx
+import { useEffect, useState } from "react";
+
+const API_BASE = "http://localhost:8000/api";
+
+export function ScanForm() {
+  const [publicId, setPublicId] = useState(null);
+  const [status, setStatus] = useState("idle");
+  const [result, setResult] = useState(null);
+
+  async function submitScan(formData) {
+    setStatus("submitting");
+    const res = await fetch(`${API_BASE}/public/scans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formData),
+    });
+    if (!res.ok) {
+      setStatus("error");
+      return;
+    }
+    const data = await res.json();
+    setPublicId(data.publicId);
+    setStatus("pending");
+  }
+
+  useEffect(() => {
+    if (!publicId) return;
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      const res = await fetch(`${API_BASE}/public/results/${publicId}`);
+      const data = await res.json();
+      if (cancelled) return;
+      if (res.status === 200) {
+        setResult(data);
+        setStatus("complete");
+        clearInterval(interval);
+      } else if (res.status === 500) {
+        setStatus("failed");
+        clearInterval(interval);
+      } else if (res.status === 404) {
+        setStatus("not_found");
+        clearInterval(interval);
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [publicId]);
+
+  return (
+    <div>
+      <button
+        onClick={() =>
+          submitScan({
+            name: "Test User",
+            email: "test@example.com",
+            company_name: "Acme Inc",
+            homepage_url: "https://acme.example",
+            product_name: "Widget",
+            product_page_url: "https://acme.example/widget",
+          })
+        }
+      >
+        Submit
+      </button>
+      <div>Status: {status}</div>
+      {result && <pre>{JSON.stringify(result, null, 2)}</pre>}
+    </div>
+  );
+}
+```
+
+Admin login with cookie (use credentials):
+```jsx
+async function adminLogin(email, password) {
+  const res = await fetch(`${API_BASE}/admin/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+    credentials: "include",
+  });
+  return res.ok;
+}
+```
+
 ## 9. Prompt Assembly (Server-Side)
 
 System + user message strategy:
-- System message: “You are …” plus global constraints.
+- System message: global constraints.
 - User message: embed the form inputs and strict output instructions.
 
 The provided AgentFlow example includes:
 - Form input injection tokens (e.g., `{{ $form.company_name }}` etc.)
-- Strict output JSON format + content rules (internal vs customer layers). fileciteturn4file14
+- Strict output JSON format + content rules (internal vs customer layers). 
 
 Backend must implement equivalent prompt interpolation using the stored active prompts plus current form inputs.
 
@@ -309,16 +630,17 @@ Backend must implement equivalent prompt interpolation using the stored active p
 Minimum:
 - Structured logging per request (`requestId`, route, status)
 - Capture LLM latency and token usage (if available)
-- Store “failed” model raw output for admin debugging only
+- Store failed model raw output for admin debugging only
 - Health endpoint: `GET /health`
+Current behavior:
+- Request ID added and logged as `X-Request-Id`
 
 ---
 
 ## 11. Security and Privacy
 
-- CORS allowlist for your frontend domain(s)
+- CORS (origin echo + credentials)
 - Rate limit:
-  - `POST /api/public/scans` (e.g., per IP)
   - `POST /api/admin/auth/login`
 - Do not expose internal_report outside admin endpoints
 - Sanitize output before email/send (avoid HTML injection)
@@ -331,8 +653,13 @@ Minimum:
 
 - Public scan submission persists inputs + analytics.
 - Active prompts are loaded from MongoDB and applied.
-- LLM output is validated against strict JSON schema. fileciteturn4file14
+- LLM output is validated against strict JSON schema. 
 - Customer-safe results available via publicId without leaking internal_report.
 - Emails send on successful completion; statuses persisted.
 - Admin auth restricted to allowlist (max 3 emails) and fixed hashed password.
 - Admin endpoints support: view outcomes, prompt CRUD, delete user data, view analytics.
+
+
+
+
+
