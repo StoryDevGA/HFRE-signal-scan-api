@@ -4,6 +4,30 @@ const { getActivePrompt } = require("./promptService");
 const { runScanAgent } = require("./scanAgent");
 const { sendCustomerEmail, sendOwnerEmail } = require("./emailService");
 
+function runScanAgentWithTimeout(params) {
+  const timeoutMs = Number(process.env.LLM_TIMEOUT_MS || "60000");
+
+  if (!timeoutMs || Number.isNaN(timeoutMs) || timeoutMs <= 0) {
+    return runScanAgent(params);
+  }
+
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error("LLM request timed out."));
+    }, timeoutMs);
+  });
+
+  return Promise.race([
+    runScanAgent(params),
+    timeoutPromise,
+  ]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  });
+}
+
 function extractAgentOutput(result) {
   if (!result) {
     return null;
@@ -80,22 +104,22 @@ async function processSubmission(submissionId) {
     return;
   }
 
-  const [systemPrompt, userPrompt] = await Promise.all([
-    getActivePrompt("system"),
-    getActivePrompt("user"),
-  ]);
-
-  if (!systemPrompt || !userPrompt) {
-    submission.status = "failed";
-    submission.failure = {
-      message: "Active prompts not configured.",
-    };
-    await submission.save();
-    return;
-  }
-
   try {
-    const result = await runScanAgent({
+    const [systemPrompt, userPrompt] = await Promise.all([
+      getActivePrompt("system"),
+      getActivePrompt("user"),
+    ]);
+
+    if (!systemPrompt || !userPrompt) {
+      submission.status = "failed";
+      submission.failure = {
+        message: "Active prompts not configured.",
+      };
+      await submission.save();
+      return;
+    }
+
+    const result = await runScanAgentWithTimeout({
       systemPrompt: systemPrompt.content,
       userPrompt: userPrompt.content,
       formInputs: submission.inputs,

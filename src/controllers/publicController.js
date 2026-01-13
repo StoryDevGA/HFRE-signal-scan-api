@@ -50,6 +50,7 @@ async function createScan(req, res) {
 
 async function getPublicResult(req, res) {
   const { publicId } = req.params;
+  const retryAfterMs = Number(process.env.PENDING_RETRY_MS || "60000");
 
   try {
     const submission = await Submission.findOne({ publicId }).lean();
@@ -58,6 +59,15 @@ async function getPublicResult(req, res) {
     }
 
     if (submission.status === "pending") {
+      if (
+        retryAfterMs > 0 &&
+        submission.updatedAt &&
+        Date.now() - new Date(submission.updatedAt).getTime() > retryAfterMs
+      ) {
+        processSubmission(submission._id).catch((error) => {
+          console.error("Retry scan failed:", error);
+        });
+      }
       return res.status(202).json({ status: "pending" });
     }
 

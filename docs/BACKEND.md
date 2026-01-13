@@ -191,6 +191,7 @@ Security notes:
 
 Recommended for UX:
 - Return `{ publicId }` immediately, and frontend polls `GET /api/public/results/:publicId` until complete.
+If a submission stays pending past `PENDING_RETRY_MS` (default 60000), the results endpoint will trigger a retry.
 
 ---
 
