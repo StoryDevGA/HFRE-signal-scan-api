@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const { Analytics, Submission } = require("../models");
+const { processSubmission } = require("../services/scanService");
 const { publicScanSchema } = require("../validators/schemas");
 
 function generatePublicId() {
@@ -34,6 +35,10 @@ async function createScan(req, res) {
       userAgent: req.get("user-agent") || "",
       acceptLanguage: req.get("accept-language") || "",
       referrer: req.get("referer") || "",
+    });
+
+    processSubmission(submission._id).catch((error) => {
+      console.error("Async scan failed:", error);
     });
 
     return res.status(201).json({ publicId });

@@ -9,7 +9,7 @@ const { Prompt } = require("../models/prompt");
 
 const AGENT_FILE = path.resolve(
   __dirname,
-  "../../HFRE-Signal-scan V4 Agents.json"
+  "../../../HFRE-Signal-scan V4 Agents.json"
 );
 
 async function loadMessages() {

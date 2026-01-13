@@ -54,6 +54,10 @@ const submissionSchema = new mongoose.Schema(
       ownerSentAt: { type: Date },
       lastError: { type: String },
     },
+    failure: {
+      message: { type: String },
+      rawOutput: { type: mongoose.Schema.Types.Mixed },
+    },
   },
   { timestamps: true }
 );

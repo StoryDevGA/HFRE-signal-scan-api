@@ -6,9 +6,9 @@
 4) Create Mongoose models: submissions, prompts, analytics, adminAudit with indexes. (done)
 5) Seed initial system and user prompts from HFRE-Signal-scan V4 Agents.json. (done)
 6) Implement prompt service with one-active-per-type guard. (done)
-7) Build scanAgent service with LangChain createAgent + initChatModel + Zod responseFormat.
-8) Implement POST /api/public/scans with validation, analytics capture, pending submission, async scan.
-9) Implement LLM execution worker/service and update submission status on completion or failure.
+7) Build scanAgent service with LangChain createAgent + initChatModel + Zod responseFormat. (done)
+8) Implement POST /api/public/scans with validation, analytics capture, pending submission, async scan. (done)
+9) Implement LLM execution worker/service and update submission status on completion or failure. (done)
 10) Implement email sender for customer and internal notifications with status persistence.
 11) Implement GET /api/public/results/:publicId with pending/complete/failed responses.
 12) Implement admin auth endpoints with allowlist, bcrypt hash, session cookie, rate limit.
