@@ -5,7 +5,7 @@
 3) Build Zod/Joi schemas for public input, admin auth, prompt CRUD, and LLM output. (done)
 4) Create Mongoose models: submissions, prompts, analytics, adminAudit with indexes. (done)
 5) Seed initial system and user prompts from HFRE-Signal-scan V4 Agents.json. (done)
-6) Implement prompt service with one-active-per-type guard.
+6) Implement prompt service with one-active-per-type guard. (done)
 7) Build scanAgent service with LangChain createAgent + initChatModel + Zod responseFormat.
 8) Implement POST /api/public/scans with validation, analytics capture, pending submission, async scan.
 9) Implement LLM execution worker/service and update submission status on completion or failure.
