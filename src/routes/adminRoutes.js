@@ -25,6 +25,7 @@ const loginRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 })
 
 router.post("/auth/login", loginRateLimiter, login);
 router.post("/auth/logout", logout);
+router.get("/auth/logout", logout);
 
 router.use(requireAdmin);
 router.get("/submissions", listSubmissions);

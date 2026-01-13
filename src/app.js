@@ -40,7 +40,12 @@ app.use((req, res, next) => {
 morgan.token("request-id", (req) => req.requestId);
 
 app.use(helmet());
-app.use(express.json({ limit: "1mb" }));
+app.use((req, res, next) => {
+  if (req.path === "/api/admin/auth/logout") {
+    return next();
+  }
+  return express.json({ limit: "1mb" })(req, res, next);
+});
 app.use(
   morgan(
     ":remote-addr - :method :url :status :res[content-length] - :response-time ms :request-id"

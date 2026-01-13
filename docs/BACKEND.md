@@ -246,6 +246,8 @@ Sets httpOnly cookie.
 
 #### `POST /api/admin/auth/logout`
 Clears cookie.
+#### `GET /api/admin/auth/logout`
+Clears cookie.
 
 ### 8.3 Admin Submissions API
 
