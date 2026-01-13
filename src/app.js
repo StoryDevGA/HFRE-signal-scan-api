@@ -5,23 +5,11 @@ const { adminRoutes, healthRoutes, publicRoutes } = require("./routes");
 
 const app = express();
 
-const allowlist = (process.env.CORS_ORIGIN || "")
-  .split(",")
-  .map((value) =>
-    value
-      .trim()
-      .replace(/^['"]/, "")
-      .replace(/['"]$/, "")
-  )
-  .filter(Boolean);
-const allowAll = allowlist.includes("*") || allowlist.length === 0;
-
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  const isAllowed = allowAll || (origin && allowlist.includes(origin));
 
-  if (isAllowed) {
-    res.setHeader("Access-Control-Allow-Origin", origin || "*");
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader(
