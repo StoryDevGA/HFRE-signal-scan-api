@@ -150,6 +150,8 @@ Implementation approach:
 - ENV:
   - `ADMIN_EMAILS` = comma-separated list of up to 3 emails
   - `ADMIN_PASSWORD_HASH` = bcrypt hash of the fixed password (bcryptjs)
+  - Generate hash:
+    - `node -e "console.log(require('bcryptjs').hashSync('YourPassword123', 10))"`
 - Login endpoint checks:
   1) email is in allowlist
   2) password matches bcrypt hash
