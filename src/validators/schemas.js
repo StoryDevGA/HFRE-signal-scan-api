@@ -2,7 +2,7 @@ const { z } = require("zod");
 
 const trimmedString = z.string().trim();
 const shortText = trimmedString.min(2).max(256);
-const longText = trimmedString.min(2).max(10000);
+const longText = trimmedString.min(2).max(20000);
 
 const publicScanSchema = z
   .object({
