@@ -1,5 +1,9 @@
 const { Prompt } = require("../models");
-const { createPrompt, updatePrompt } = require("../services/promptService");
+const { 
+  createPrompt, 
+  updatePrompt,
+  deletePrompt: deletePromptService 
+} = require("../services/promptService");
 const {
   promptCreateSchema,
   promptUpdateSchema,
@@ -55,21 +59,11 @@ async function updatePromptHandler(req, res) {
 
 async function deletePrompt(req, res) {
   try {
-    const prompt = await Prompt.findById(req.params.id);
-    if (!prompt) {
-      return res.status(404).json({ error: "Prompt not found." });
-    }
-
-    if (prompt.active) {
-      return res
-        .status(400)
-        .json({ error: "Disable active prompt before deleting." });
-    }
-
-    await prompt.deleteOne();
+    await deletePromptService(req.params.id);
     return res.status(200).json({ ok: true });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to delete prompt." });
+    const status = error.message.includes("not found") ? 404 : 400;
+    return res.status(status).json({ error: error.message });
   }
 }
 

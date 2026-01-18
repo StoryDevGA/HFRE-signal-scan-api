@@ -27,7 +27,7 @@ const promptCreateSchema = z
     type: z.enum(["system", "user"]),
     name: shortText,
     content: longText,
-    active: z.boolean().optional(),
+    isActive: z.boolean().optional(),
     version: z.number().int().positive().optional(),
   })
   .strict();
@@ -37,7 +37,7 @@ const promptUpdateSchema = z
     type: z.enum(["system", "user"]).optional(),
     name: shortText.optional(),
     content: longText.optional(),
-    active: z.boolean().optional(),
+    isActive: z.boolean().optional(),
     version: z.number().int().positive().optional(),
   })
   .strict()

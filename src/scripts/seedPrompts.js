@@ -45,7 +45,7 @@ async function seedPrompts() {
       type: "system",
       name: "HFRE Signal Scan v4 System",
       content: system,
-      active: true,
+      isActive: true,
       version: 4,
     });
   }
@@ -54,7 +54,7 @@ async function seedPrompts() {
       type: "user",
       name: "HFRE Signal Scan v4 User",
       content: user,
-      active: true,
+      isActive: true,
       version: 4,
     });
   }
