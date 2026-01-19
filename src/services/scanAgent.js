@@ -1,9 +1,29 @@
 const { StateGraph, END } = require("@langchain/langgraph");
+const { ChatOpenAI } = require("@langchain/openai");
+
+// Validate API key at startup
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error("OPENAI_API_KEY environment variable is required");
+}
+
+// Cached compiled graph (singleton)
+let cachedGraph = null;
+
+// Input sanitization to prevent prompt injection
+function sanitizeInput(value) {
+  if (value == null) return "";
+  // Convert to string and remove control characters and excessive whitespace
+  return String(value)
+    .replace(/[\x00-\x1F\x7F]/g, "") // Remove control characters
+    .replace(/\s+/g, " ") // Normalize whitespace
+    .trim()
+    .slice(0, 10000); // Limit length
+}
 
 function interpolatePrompt(template, inputs) {
   return template.replace(/\{\{\s*\$form\.([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => {
     const value = inputs[key];
-    return value == null ? "" : String(value);
+    return sanitizeInput(value);
   });
 }
 
@@ -21,7 +41,6 @@ function parseMaybeJson(value) {
 // Node 1: Invoke LLM
 async function invokeLLMNode(state) {
   try {
-    const { ChatOpenAI } = require("@langchain/openai");
     const modelName = process.env.LLM_MODEL || "gpt-4o-mini";
     const temperature = Number(process.env.LLM_TEMPERATURE || "0.2");
 
@@ -83,7 +102,12 @@ function shouldContinue(state) {
 }
 
 // Build the fixed agent graph
-async function buildScanGraph() {
+function buildScanGraph() {
+  // Return cached graph if available
+  if (cachedGraph) {
+    return cachedGraph;
+  }
+
   const graph = new StateGraph({
     channels: {
       systemPrompt: { value: (x, y) => y ?? x ?? null },
@@ -106,12 +130,14 @@ async function buildScanGraph() {
   // Set entry point
   graph.setEntryPoint("invokeLLM");
 
-  return graph.compile();
+  // Cache and return
+  cachedGraph = graph.compile();
+  return cachedGraph;
 }
 
 // Main function to run the scan agent
 async function runScanAgent({ systemPrompt, userPrompt, formInputs }) {
-  const graph = await buildScanGraph();
+  const graph = buildScanGraph();
   
   const result = await graph.invoke({
     systemPrompt,
@@ -133,4 +159,5 @@ module.exports = {
   interpolatePrompt,
   runScanAgent,
   buildScanGraph,
+  parseMaybeJson,
 };

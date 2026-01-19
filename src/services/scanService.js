@@ -1,8 +1,21 @@
 const { Submission } = require("../models");
 const { llmOutputSchema } = require("../validators/schemas");
 const { getActivePrompt } = require("./promptService");
-const { runScanAgent } = require("./scanAgent");
+const { runScanAgent, parseMaybeJson } = require("./scanAgent");
 const { sendCustomerEmail, sendOwnerEmail } = require("./emailService");
+
+// Sanitize error messages to prevent information disclosure
+function sanitizeErrorMessage(error) {
+  if (!error) return "An error occurred";
+  const message = error.message || String(error);
+  
+  // Remove file paths, API keys, and sensitive data
+  return message
+    .replace(/\/[^\s]+\.(js|ts|json)/gi, "[file]") // Remove file paths
+    .replace(/sk-[a-zA-Z0-9]+/g, "[key]") // Remove API keys
+    .replace(/mongodb\+srv:\/\/[^\s]+/g, "[connection]") // Remove connection strings
+    .slice(0, 500); // Limit length
+}
 
 function runScanAgentWithTimeout(params) {
   const timeoutMs = Number(process.env.LLM_TIMEOUT_MS || "60000");
@@ -39,17 +52,6 @@ function extractAgentOutput(result) {
     return result.response;
   }
   return result;
-}
-
-function parseMaybeJson(value) {
-  if (typeof value !== "string") {
-    return value;
-  }
-  try {
-    return JSON.parse(value);
-  } catch (error) {
-    return value;
-  }
 }
 
 async function sendCompletionEmails(submission) {
@@ -91,7 +93,7 @@ async function sendCompletionEmails(submission) {
   if (errors.length) {
     emailStatus.lastError = errors.join(" | ");
   } else {
-    emailStatus.lastError = undefined;
+    emailStatus.lastError = null;
   }
 
   submission.emailStatus = emailStatus;
@@ -101,6 +103,12 @@ async function sendCompletionEmails(submission) {
 async function processSubmission(submissionId) {
   const submission = await Submission.findById(submissionId);
   if (!submission) {
+    return;
+  }
+
+  // Idempotency check: only process if status is pending
+  if (submission.status !== "pending") {
+    console.log(`Submission ${submissionId} already processed with status: ${submission.status}`);
     return;
   }
 
@@ -151,9 +159,10 @@ async function processSubmission(submissionId) {
     await submission.save();
     await sendCompletionEmails(submission);
   } catch (error) {
+    console.error("Submission processing error:", error);
     submission.status = "failed";
     submission.failure = {
-      message: error.message || "LLM execution failed.",
+      message: sanitizeErrorMessage(error),
     };
     await submission.save();
   }
