@@ -32,6 +32,16 @@ async function createPromptHandler(req, res) {
   }
 
   try {
+    const existingCount = await Prompt.countDocuments({
+      type: parsed.data.type,
+    });
+    if (existingCount > 0) {
+      return res
+        .status(409)
+        .json({
+          error: "Prompt already exists for this type. Update it instead.",
+        });
+    }
     const prompt = await createPrompt(parsed.data);
     return res.status(201).json(prompt);
   } catch (error) {
