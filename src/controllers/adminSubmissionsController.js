@@ -44,7 +44,10 @@ async function listSubmissions(req, res) {
     ]);
 
     return res.status(200).json({
-      items,
+      items: items.map((item) => ({
+        ...item,
+        failureMessage: item.failure?.message || "",
+      })),
       page,
       pageSize,
       total,
@@ -68,7 +71,11 @@ async function getSubmission(req, res) {
       submissionId: submission._id,
     }).lean();
 
-    return res.status(200).json({ submission, analytics });
+    return res.status(200).json({
+      submission,
+      analytics,
+      failureMessage: submission.failure?.message || "",
+    });
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch submission." });
   }

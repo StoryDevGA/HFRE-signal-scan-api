@@ -72,7 +72,9 @@ async function getPublicResult(req, res) {
     }
 
     if (submission.status === "failed") {
-      return res.status(500).json({ status: "failed" });
+      return res
+        .status(500)
+        .json({ status: "failed", message: submission.failure?.message || "" });
     }
 
     const outputs = submission.outputs || {};
@@ -85,7 +87,7 @@ async function getPublicResult(req, res) {
     });
   } catch (error) {
     console.error("Failed to fetch submission:", error);
-    return res.status(500).json({ status: "failed" });
+    return res.status(500).json({ status: "failed", message: "" });
   }
 }
 
