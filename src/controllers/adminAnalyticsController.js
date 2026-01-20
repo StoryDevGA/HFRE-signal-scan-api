@@ -144,7 +144,7 @@ async function getAnalytics(req, res) {
       ]),
       Analytics.find().lean(),
       Submission.find({ usage: { $exists: true } })
-        .select({ usage: 1 })
+        .select({ usage: 1, promptRefs: 1 })
         .lean(),
       Submission.find({ "processing.completedAt": { $exists: true } })
         .select({ createdAt: 1, processing: 1 })
@@ -203,6 +203,11 @@ async function getAnalytics(req, res) {
       totalTokens: 0,
       submissionsWithUsage: 0,
     };
+    const usageTotalsBySystem = new Map();
+    const usageCountsBySystem = new Map();
+    const usageTotalsByUser = new Map();
+    const usageCountsByUser = new Map();
+
     usageRecords.forEach((record) => {
       const normalized = normalizeUsage(record.usage);
       if (!normalized) return;
@@ -210,6 +215,30 @@ async function getAnalytics(req, res) {
       usageTotals.completionTokens += normalized.completionTokens;
       usageTotals.totalTokens += normalized.totalTokens;
       usageTotals.submissionsWithUsage += 1;
+
+      const systemVersion =
+        record.promptRefs?.systemPromptVersion ?? "null";
+      const userVersion = record.promptRefs?.userPromptVersion ?? "null";
+
+      const systemKey = String(systemVersion);
+      usageTotalsBySystem.set(
+        systemKey,
+        (usageTotalsBySystem.get(systemKey) || 0) + normalized.totalTokens
+      );
+      usageCountsBySystem.set(
+        systemKey,
+        (usageCountsBySystem.get(systemKey) || 0) + 1
+      );
+
+      const userKey = String(userVersion);
+      usageTotalsByUser.set(
+        userKey,
+        (usageTotalsByUser.get(userKey) || 0) + normalized.totalTokens
+      );
+      usageCountsByUser.set(
+        userKey,
+        (usageCountsByUser.get(userKey) || 0) + 1
+      );
     });
 
     const usageAverages = {
@@ -225,6 +254,28 @@ async function getAnalytics(req, res) {
         ? Math.round(usageTotals.totalTokens / usageTotals.submissionsWithUsage)
         : 0,
     };
+
+    const usageBySystemVersion = Array.from(usageTotalsBySystem.entries()).map(
+      ([key, totalTokens]) => {
+        const count = usageCountsBySystem.get(key) || 0;
+        const version = key === "null" ? null : Number(key);
+        return {
+          version: Number.isNaN(version) ? null : version,
+          avgTotalTokens: count ? Math.round(totalTokens / count) : 0,
+        };
+      }
+    );
+
+    const usageByUserVersion = Array.from(usageTotalsByUser.entries()).map(
+      ([key, totalTokens]) => {
+        const count = usageCountsByUser.get(key) || 0;
+        const version = key === "null" ? null : Number(key);
+        return {
+          version: Number.isNaN(version) ? null : version,
+          avgTotalTokens: count ? Math.round(totalTokens / count) : 0,
+        };
+      }
+    );
 
     const durations = [];
     const perDayDurations = new Map();
@@ -417,6 +468,8 @@ async function getAnalytics(req, res) {
       usage: {
         ...usageTotals,
         ...usageAverages,
+        bySystemVersion: usageBySystemVersion,
+        byUserVersion: usageByUserVersion,
       },
     });
   } catch (error) {

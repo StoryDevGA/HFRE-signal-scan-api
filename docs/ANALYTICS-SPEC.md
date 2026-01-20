@@ -61,7 +61,7 @@ Metrics
   - byUserVersion: [{ version, completeRate, avgDurationMs }]
   - byPair: [{ systemVersion, userVersion, completeRate, avgDurationMs }]
 
-5) Token Usage
+5) Token Usage (DONE)
 - Definition: total tokens and averages by prompt version and overall.
 - Source: Submission.usage.
 - Output:
