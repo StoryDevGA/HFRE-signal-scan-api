@@ -106,6 +106,11 @@ async function processSubmission(submissionId) {
     return;
   }
 
+  submission.processing = submission.processing || {};
+  if (!submission.processing.startedAt) {
+    submission.processing.startedAt = new Date();
+  }
+
   // Idempotency check: only process if status is pending
   if (submission.status !== "pending") {
     console.log(`Submission ${submissionId} already processed with status: ${submission.status}`);
@@ -123,15 +128,20 @@ async function processSubmission(submissionId) {
       submission.failure = {
         message: "Active prompts not configured.",
       };
+      submission.processing.completedAt = new Date();
+      submission.processing.totalDurationMs =
+        submission.processing.completedAt.getTime() - submission.createdAt.getTime();
       await submission.save();
       return;
     }
 
+    const llmStart = Date.now();
     const result = await runScanAgentWithTimeout({
       systemPrompt: systemPrompt.content,
       userPrompt: userPrompt.content,
       formInputs: submission.inputs,
     });
+    submission.processing.llmDurationMs = Date.now() - llmStart;
 
     const tokenUsage = result?.tokenUsage || null;
     const extracted = extractAgentOutput(result);
@@ -158,6 +168,9 @@ async function processSubmission(submissionId) {
       userPromptVersion: userPrompt.version,
     };
     submission.failure = undefined;
+    submission.processing.completedAt = new Date();
+    submission.processing.totalDurationMs =
+      submission.processing.completedAt.getTime() - submission.createdAt.getTime();
     await submission.save();
     await sendCompletionEmails(submission);
   } catch (error) {
@@ -166,6 +179,10 @@ async function processSubmission(submissionId) {
     submission.failure = {
       message: sanitizeErrorMessage(error),
     };
+    submission.processing = submission.processing || {};
+    submission.processing.completedAt = new Date();
+    submission.processing.totalDurationMs =
+      submission.processing.completedAt.getTime() - submission.createdAt.getTime();
     await submission.save();
   }
 }

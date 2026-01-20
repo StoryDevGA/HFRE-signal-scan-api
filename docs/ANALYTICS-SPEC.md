@@ -38,7 +38,7 @@ Metrics
   - rates: completeRate, failedRate
   - countsByDay: [{ date, total, pending, complete, failed }]
 
-2) Time-to-Complete
+2) Time-to-Complete (DONE)
 - Definition: latency from submission creation to completion (or failure).
 - Source: Submission.createdAt, Submission.processing.completedAt.
 - Output:

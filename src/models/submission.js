@@ -61,6 +61,12 @@ const submissionSchema = new mongoose.Schema(
       message: { type: String },
       rawOutput: { type: mongoose.Schema.Types.Mixed },
     },
+    processing: {
+      startedAt: { type: Date },
+      completedAt: { type: Date },
+      llmDurationMs: { type: Number },
+      totalDurationMs: { type: Number },
+    },
   },
   { timestamps: true }
 );

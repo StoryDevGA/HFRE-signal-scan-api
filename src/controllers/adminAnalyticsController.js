@@ -48,6 +48,35 @@ function toSortedCounts(map) {
     .sort((a, b) => b.count - a.count);
 }
 
+function percentile(sortedValues, p) {
+  if (!sortedValues.length) {
+    return 0;
+  }
+  const index = (sortedValues.length - 1) * p;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) {
+    return sortedValues[lower];
+  }
+  const weight = index - lower;
+  return Math.round(
+    sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * weight
+  );
+}
+
+function computeLatencyStats(durations) {
+  if (!durations.length) {
+    return { p50: 0, p90: 0, p95: 0, max: 0 };
+  }
+  const sorted = [...durations].sort((a, b) => a - b);
+  return {
+    p50: percentile(sorted, 0.5),
+    p90: percentile(sorted, 0.9),
+    p95: percentile(sorted, 0.95),
+    max: sorted[sorted.length - 1],
+  };
+}
+
 function normalizeUsage(usage) {
   if (!usage || typeof usage !== "object") {
     return null;
@@ -82,7 +111,8 @@ function normalizeUsage(usage) {
 
 async function getAnalytics(req, res) {
   try {
-    const [statusCounts, dailyCounts, analytics, usageRecords] = await Promise.all([
+    const [statusCounts, dailyCounts, analytics, usageRecords, latencyRecords] =
+      await Promise.all([
       Submission.aggregate([
         { $group: { _id: "$status", count: { $sum: 1 } } },
       ]),
@@ -107,6 +137,9 @@ async function getAnalytics(req, res) {
       Analytics.find().lean(),
       Submission.find({ usage: { $exists: true } })
         .select({ usage: 1 })
+        .lean(),
+      Submission.find({ "processing.completedAt": { $exists: true } })
+        .select({ createdAt: 1, processing: 1 })
         .lean(),
     ]);
 
@@ -154,6 +187,35 @@ async function getAnalytics(req, res) {
         : 0,
     };
 
+    const durations = [];
+    const perDayDurations = new Map();
+    latencyRecords.forEach((record) => {
+      const completedAt = record.processing?.completedAt;
+      if (!completedAt) return;
+      const start = record.createdAt ? new Date(record.createdAt).getTime() : null;
+      const end = new Date(completedAt).getTime();
+      if (!start || !end) return;
+      const duration = end - start;
+      if (duration < 0) return;
+      durations.push(duration);
+
+      const date = new Date(record.createdAt)
+        .toISOString()
+        .slice(0, 10);
+      if (!perDayDurations.has(date)) {
+        perDayDurations.set(date, []);
+      }
+      perDayDurations.get(date).push(duration);
+    });
+
+    const latencyStats = computeLatencyStats(durations);
+    const latencyByDay = Array.from(perDayDurations.entries())
+      .map(([date, values]) => {
+        const stats = computeLatencyStats(values);
+        return { date, p50: stats.p50, p90: stats.p90 };
+      })
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+
     return res.status(200).json({
       totals: {
         total,
@@ -172,6 +234,8 @@ async function getAnalytics(req, res) {
         complete: item.complete,
         failed: item.failed,
       })),
+      latencyMs: latencyStats,
+      latencyByDay,
       topBrowsers: toSortedCounts(browserCounts),
       topDevices: toSortedCounts(deviceCounts),
       usage: {
