@@ -48,6 +48,17 @@ function toSortedCounts(map) {
     .sort((a, b) => b.count - a.count);
 }
 
+function normalizeReferrer(referrer) {
+  if (!referrer) {
+    return "Direct";
+  }
+  try {
+    return new URL(referrer).origin;
+  } catch (error) {
+    return String(referrer);
+  }
+}
+
 function percentile(sortedValues, p) {
   if (!sortedValues.length) {
     return 0;
@@ -219,10 +230,16 @@ async function getAnalytics(req, res) {
 
     const browserCounts = new Map();
     const deviceCounts = new Map();
+    const referrerCounts = new Map();
+    const countryCounts = new Map();
     analytics.forEach((record) => {
       const userAgent = record.userAgent || "";
       incrementCounter(browserCounts, parseBrowser(userAgent));
       incrementCounter(deviceCounts, parseDevice(userAgent));
+      incrementCounter(referrerCounts, normalizeReferrer(record.referrer));
+      if (record.client?.country) {
+        incrementCounter(countryCounts, record.client.country);
+      }
     });
 
     const usageTotals = {
@@ -517,6 +534,8 @@ async function getAnalytics(req, res) {
       retries: retryAnalytics,
       topBrowsers: toSortedCounts(browserCounts),
       topDevices: toSortedCounts(deviceCounts),
+      topReferrers: toSortedCounts(referrerCounts),
+      topCountries: toSortedCounts(countryCounts),
       usage: {
         ...usageTotals,
         ...usageAverages,

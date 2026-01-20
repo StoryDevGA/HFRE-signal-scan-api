@@ -12,6 +12,13 @@ const analyticsSchema = new mongoose.Schema(
     acceptLanguage: { type: String },
     referrer: { type: String },
     deviceSummary: { type: String },
+    client: {
+      country: { type: String },
+      region: { type: String },
+      city: { type: String },
+      timezone: { type: String },
+      ipAnonymized: { type: String },
+    },
   },
   { timestamps: true }
 );

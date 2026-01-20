@@ -84,7 +84,7 @@ Metrics
   - retriesPerDay: [{ date, retries }]
   - retrySuccessRate
 
-8) Traffic Sources & Client Stats
+8) Traffic Sources & Client Stats (DONE)
 - Definition: referrer, browser, device, geo breakdowns.
 - Source: Analytics.referrer, Analytics.userAgent, Analytics.client.
 - Output:
