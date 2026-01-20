@@ -92,7 +92,14 @@ async function getAnalytics(req, res) {
             _id: {
               $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
             },
-            count: { $sum: 1 },
+            total: { $sum: 1 },
+            pending: {
+              $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
+            },
+            complete: {
+              $sum: { $cond: [{ $eq: ["$status", "complete"] }, 1, 0] },
+            },
+            failed: { $sum: { $cond: [{ $eq: ["$status", "failed"] }, 1, 0] } },
           },
         },
         { $sort: { _id: 1 } },
@@ -106,6 +113,8 @@ async function getAnalytics(req, res) {
     const total = statusCounts.reduce((sum, item) => sum + item.count, 0);
     const complete =
       statusCounts.find((item) => item._id === "complete")?.count || 0;
+    const failed =
+      statusCounts.find((item) => item._id === "failed")?.count || 0;
     const conversionRate = total ? complete / total : 0;
 
     const browserCounts = new Map();
@@ -151,13 +160,17 @@ async function getAnalytics(req, res) {
         pending:
           statusCounts.find((item) => item._id === "pending")?.count || 0,
         complete,
-        failed:
-          statusCounts.find((item) => item._id === "failed")?.count || 0,
+        failed,
         conversionRate,
+        completeRate: total ? complete / total : 0,
+        failedRate: total ? failed / total : 0,
       },
       countsByDay: dailyCounts.map((item) => ({
         date: item._id,
-        count: item.count,
+        total: item.total,
+        pending: item.pending,
+        complete: item.complete,
+        failed: item.failed,
       })),
       topBrowsers: toSortedCounts(browserCounts),
       topDevices: toSortedCounts(deviceCounts),
