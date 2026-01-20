@@ -111,8 +111,15 @@ function normalizeUsage(usage) {
 
 async function getAnalytics(req, res) {
   try {
-    const [statusCounts, dailyCounts, analytics, usageRecords, latencyRecords] =
-      await Promise.all([
+    const [
+      statusCounts,
+      dailyCounts,
+      analytics,
+      usageRecords,
+      latencyRecords,
+      failureMessages,
+      failureByPromptVersion,
+    ] = await Promise.all([
       Submission.aggregate([
         { $group: { _id: "$status", count: { $sum: 1 } } },
       ]),
@@ -141,6 +148,24 @@ async function getAnalytics(req, res) {
       Submission.find({ "processing.completedAt": { $exists: true } })
         .select({ createdAt: 1, processing: 1 })
         .lean(),
+      Submission.aggregate([
+        { $match: { status: "failed", "failure.message": { $exists: true, $ne: "" } } },
+        { $group: { _id: "$failure.message", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      Submission.aggregate([
+        { $match: { status: "failed" } },
+        {
+          $group: {
+            _id: {
+              systemPromptVersion: "$promptRefs.systemPromptVersion",
+              userPromptVersion: "$promptRefs.userPromptVersion",
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { count: -1 } },
+      ]),
     ]);
 
     const total = statusCounts.reduce((sum, item) => sum + item.count, 0);
@@ -236,6 +261,18 @@ async function getAnalytics(req, res) {
       })),
       latencyMs: latencyStats,
       latencyByDay,
+      failures: {
+        topFailures: failureMessages.map((item) => ({
+          message: item._id,
+          count: item.count,
+        })),
+        failureRate: total ? failed / total : 0,
+        failureByPromptVersion: failureByPromptVersion.map((item) => ({
+          systemPromptVersion: item._id.systemPromptVersion ?? null,
+          userPromptVersion: item._id.userPromptVersion ?? null,
+          count: item.count,
+        })),
+      },
       topBrowsers: toSortedCounts(browserCounts),
       topDevices: toSortedCounts(deviceCounts),
       usage: {

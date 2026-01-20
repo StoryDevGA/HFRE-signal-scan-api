@@ -45,7 +45,7 @@ Metrics
   - latencyMs: p50, p90, p95, max
   - perDay: [{ date, p50, p90 }]
 
-3) Failure Analytics
+3) Failure Analytics (DONE)
 - Definition: most common failure messages and failure rate.
 - Source: Submission.failure.message, Submission.status.
 - Output:
