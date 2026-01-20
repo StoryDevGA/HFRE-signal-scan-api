@@ -64,6 +64,16 @@ async function getPublicResult(req, res) {
         submission.updatedAt &&
         Date.now() - new Date(submission.updatedAt).getTime() > retryAfterMs
       ) {
+        Submission.updateOne(
+          { _id: submission._id },
+          {
+            $set: { "retry.retriedAt": new Date() },
+            $inc: { "retry.retryCount": 1 },
+          }
+        ).catch((error) => {
+          console.error("Failed to record retry:", error);
+        });
+
         processSubmission(submission._id).catch((error) => {
           console.error("Retry scan failed:", error);
         });

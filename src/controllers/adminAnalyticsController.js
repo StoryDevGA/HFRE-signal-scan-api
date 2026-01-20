@@ -120,6 +120,8 @@ async function getAnalytics(req, res) {
       failureMessages,
       failureByPromptVersion,
       promptPerformanceRecords,
+      retryStats,
+      retryByDay,
     ] = await Promise.all([
       Submission.aggregate([
         { $group: { _id: "$status", count: { $sum: 1 } } },
@@ -179,6 +181,32 @@ async function getAnalytics(req, res) {
             avgDurationMs: { $avg: "$processing.totalDurationMs" },
           },
         },
+      ]),
+      Submission.aggregate([
+        {
+          $match: { "retry.retryCount": { $gt: 0 } },
+        },
+        {
+          $group: {
+            _id: "$status",
+            submissions: { $sum: 1 },
+            totalRetries: { $sum: "$retry.retryCount" },
+          },
+        },
+      ]),
+      Submission.aggregate([
+        {
+          $match: { "retry.retryCount": { $gt: 0 }, "retry.retriedAt": { $exists: true } },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: "%Y-%m-%d", date: "$retry.retriedAt" },
+            },
+            retries: { $sum: "$retry.retryCount" },
+          },
+        },
+        { $sort: { _id: 1 } },
       ]),
     ]);
 
@@ -430,6 +458,29 @@ async function getAnalytics(req, res) {
       ),
     };
 
+    const retryTotals = retryStats.reduce(
+      (acc, record) => {
+        acc.submissions += record.submissions || 0;
+        acc.totalRetries += record.totalRetries || 0;
+        if (record._id === "complete") {
+          acc.completeSubmissions += record.submissions || 0;
+        }
+        return acc;
+      },
+      { submissions: 0, totalRetries: 0, completeSubmissions: 0 }
+    );
+
+    const retryAnalytics = {
+      totalRetries: retryTotals.totalRetries,
+      retriesPerDay: retryByDay.map((item) => ({
+        date: item._id,
+        retries: item.retries,
+      })),
+      retrySuccessRate: retryTotals.submissions
+        ? retryTotals.completeSubmissions / retryTotals.submissions
+        : 0,
+    };
+
     return res.status(200).json({
       totals: {
         total,
@@ -463,6 +514,7 @@ async function getAnalytics(req, res) {
         })),
       },
       promptPerformance,
+      retries: retryAnalytics,
       topBrowsers: toSortedCounts(browserCounts),
       topDevices: toSortedCounts(deviceCounts),
       usage: {

@@ -67,6 +67,10 @@ const submissionSchema = new mongoose.Schema(
       llmDurationMs: { type: Number },
       totalDurationMs: { type: Number },
     },
+    retry: {
+      retriedAt: { type: Date },
+      retryCount: { type: Number, default: 0 },
+    },
   },
   { timestamps: true }
 );

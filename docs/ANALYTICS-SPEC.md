@@ -76,7 +76,7 @@ Metrics
   - customer: sentRate, avgDelayMs, lastErrorRate
   - owner: sentRate, avgDelayMs, lastErrorRate
 
-7) Retry Behavior
+7) Retry Behavior (DONE)
 - Definition: number of retries for pending submissions and their outcomes.
 - Source: Submission.retry.
 - Output:
