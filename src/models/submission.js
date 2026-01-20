@@ -43,6 +43,9 @@ const submissionSchema = new mongoose.Schema(
       customer_report: { type: String },
       metadata: metadataSchema,
     },
+    usage: {
+      type: mongoose.Schema.Types.Mixed,
+    },
     promptRefs: {
       systemPromptId: { type: mongoose.Schema.Types.ObjectId, ref: "Prompt" },
       userPromptId: { type: mongoose.Schema.Types.ObjectId, ref: "Prompt" },

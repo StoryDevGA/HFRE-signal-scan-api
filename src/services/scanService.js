@@ -133,6 +133,7 @@ async function processSubmission(submissionId) {
       formInputs: submission.inputs,
     });
 
+    const tokenUsage = result?.tokenUsage || null;
     const extracted = extractAgentOutput(result);
     const parsed = parseMaybeJson(extracted);
     const validated = llmOutputSchema.safeParse(parsed);
@@ -149,6 +150,7 @@ async function processSubmission(submissionId) {
 
     submission.status = "complete";
     submission.outputs = validated.data;
+    submission.usage = tokenUsage;
     submission.promptRefs = {
       systemPromptId: systemPrompt._id,
       userPromptId: userPrompt._id,

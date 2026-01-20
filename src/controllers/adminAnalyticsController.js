@@ -48,9 +48,41 @@ function toSortedCounts(map) {
     .sort((a, b) => b.count - a.count);
 }
 
+function normalizeUsage(usage) {
+  if (!usage || typeof usage !== "object") {
+    return null;
+  }
+  const promptTokens =
+    usage.promptTokens ??
+    usage.prompt_tokens ??
+    usage.input_tokens ??
+    usage.inputTokens ??
+    null;
+  const completionTokens =
+    usage.completionTokens ??
+    usage.completion_tokens ??
+    usage.output_tokens ??
+    usage.outputTokens ??
+    null;
+  const totalTokens =
+    usage.totalTokens ??
+    usage.total_tokens ??
+    (Number(promptTokens || 0) + Number(completionTokens || 0) || null);
+
+  if (promptTokens == null && completionTokens == null && totalTokens == null) {
+    return null;
+  }
+
+  return {
+    promptTokens: Number(promptTokens || 0),
+    completionTokens: Number(completionTokens || 0),
+    totalTokens: Number(totalTokens || 0),
+  };
+}
+
 async function getAnalytics(req, res) {
   try {
-    const [statusCounts, dailyCounts, analytics] = await Promise.all([
+    const [statusCounts, dailyCounts, analytics, usageRecords] = await Promise.all([
       Submission.aggregate([
         { $group: { _id: "$status", count: { $sum: 1 } } },
       ]),
@@ -66,6 +98,9 @@ async function getAnalytics(req, res) {
         { $sort: { _id: 1 } },
       ]),
       Analytics.find().lean(),
+      Submission.find({ usage: { $exists: true } })
+        .select({ usage: 1 })
+        .lean(),
     ]);
 
     const total = statusCounts.reduce((sum, item) => sum + item.count, 0);
@@ -80,6 +115,35 @@ async function getAnalytics(req, res) {
       incrementCounter(browserCounts, parseBrowser(userAgent));
       incrementCounter(deviceCounts, parseDevice(userAgent));
     });
+
+    const usageTotals = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      submissionsWithUsage: 0,
+    };
+    usageRecords.forEach((record) => {
+      const normalized = normalizeUsage(record.usage);
+      if (!normalized) return;
+      usageTotals.promptTokens += normalized.promptTokens;
+      usageTotals.completionTokens += normalized.completionTokens;
+      usageTotals.totalTokens += normalized.totalTokens;
+      usageTotals.submissionsWithUsage += 1;
+    });
+
+    const usageAverages = {
+      averagePromptTokens: usageTotals.submissionsWithUsage
+        ? Math.round(usageTotals.promptTokens / usageTotals.submissionsWithUsage)
+        : 0,
+      averageCompletionTokens: usageTotals.submissionsWithUsage
+        ? Math.round(
+            usageTotals.completionTokens / usageTotals.submissionsWithUsage
+          )
+        : 0,
+      averageTotalTokens: usageTotals.submissionsWithUsage
+        ? Math.round(usageTotals.totalTokens / usageTotals.submissionsWithUsage)
+        : 0,
+    };
 
     return res.status(200).json({
       totals: {
@@ -97,6 +161,10 @@ async function getAnalytics(req, res) {
       })),
       topBrowsers: toSortedCounts(browserCounts),
       topDevices: toSortedCounts(deviceCounts),
+      usage: {
+        ...usageTotals,
+        ...usageAverages,
+      },
     });
   } catch (error) {
     return res.status(500).json({ error: "Failed to load analytics." });

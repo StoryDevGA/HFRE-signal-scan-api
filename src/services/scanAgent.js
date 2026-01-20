@@ -59,6 +59,10 @@ async function invokeLLMNode(state) {
     ];
 
     const response = await model.invoke(messages);
+    const tokenUsage =
+      response?.response_metadata?.tokenUsage ||
+      response?.usage_metadata ||
+      null;
     
     let content = "";
     if (response && typeof response === "object" && "content" in response) {
@@ -74,7 +78,7 @@ async function invokeLLMNode(state) {
       content = String(response);
     }
 
-    return { ...state, rawOutput: content, error: null };
+    return { ...state, rawOutput: content, tokenUsage, error: null };
   } catch (error) {
     console.error("LLM invocation error:", error);
     return { ...state, error: error.message || "LLM invocation failed" };
@@ -115,6 +119,7 @@ function buildScanGraph() {
       formInputs: { value: (x, y) => y ?? x ?? null },
       rawOutput: { value: (x, y) => y ?? x ?? null },
       parsedOutput: { value: (x, y) => y ?? x ?? null },
+      tokenUsage: { value: (x, y) => y ?? x ?? null },
       error: { value: (x, y) => y ?? x ?? null },
     },
   });
@@ -145,6 +150,7 @@ async function runScanAgent({ systemPrompt, userPrompt, formInputs }) {
     formInputs,
     rawOutput: null,
     parsedOutput: null,
+    tokenUsage: null,
     error: null,
   });
 
@@ -152,7 +158,7 @@ async function runScanAgent({ systemPrompt, userPrompt, formInputs }) {
     throw new Error(result.error);
   }
 
-  return result.parsedOutput;
+  return { output: result.parsedOutput, tokenUsage: result.tokenUsage || null };
 }
 
 module.exports = {
