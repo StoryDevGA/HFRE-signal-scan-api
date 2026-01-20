@@ -53,7 +53,7 @@ Metrics
   - failureRate: failed / total
   - failureByPromptVersion: [{ systemPromptVersion, userPromptVersion, count }]
 
-4) Prompt Performance
+4) Prompt Performance (DONE)
 - Definition: completion rate and latency by prompt version.
 - Source: Submission.promptRefs, Submission.status, Submission.processing.totalDurationMs.
 - Output:

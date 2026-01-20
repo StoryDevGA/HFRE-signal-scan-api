@@ -119,6 +119,7 @@ async function getAnalytics(req, res) {
       latencyRecords,
       failureMessages,
       failureByPromptVersion,
+      promptPerformanceRecords,
     ] = await Promise.all([
       Submission.aggregate([
         { $group: { _id: "$status", count: { $sum: 1 } } },
@@ -165,6 +166,19 @@ async function getAnalytics(req, res) {
           },
         },
         { $sort: { count: -1 } },
+      ]),
+      Submission.aggregate([
+        {
+          $group: {
+            _id: {
+              systemPromptVersion: "$promptRefs.systemPromptVersion",
+              userPromptVersion: "$promptRefs.userPromptVersion",
+              status: "$status",
+            },
+            count: { $sum: 1 },
+            avgDurationMs: { $avg: "$processing.totalDurationMs" },
+          },
+        },
       ]),
     ]);
 
@@ -241,6 +255,130 @@ async function getAnalytics(req, res) {
       })
       .sort((a, b) => (a.date < b.date ? -1 : 1));
 
+    const promptTotalsByPair = new Map();
+    const promptCompleteByPair = new Map();
+    const promptDurationByPair = new Map();
+    const promptCountByPair = new Map();
+    const promptTotalsBySystem = new Map();
+    const promptCompleteBySystem = new Map();
+    const promptDurationBySystem = new Map();
+    const promptCountBySystem = new Map();
+    const promptTotalsByUser = new Map();
+    const promptCompleteByUser = new Map();
+    const promptDurationByUser = new Map();
+    const promptCountByUser = new Map();
+
+    promptPerformanceRecords.forEach((record) => {
+      const systemVersion = record._id.systemPromptVersion ?? null;
+      const userVersion = record._id.userPromptVersion ?? null;
+      const status = record._id.status;
+      const count = record.count || 0;
+      const avgDuration = Number(record.avgDurationMs || 0);
+
+      const pairKey = `${systemVersion ?? "null"}|${userVersion ?? "null"}`;
+      promptTotalsByPair.set(pairKey, (promptTotalsByPair.get(pairKey) || 0) + count);
+      if (status === "complete") {
+        promptCompleteByPair.set(
+          pairKey,
+          (promptCompleteByPair.get(pairKey) || 0) + count
+        );
+      }
+      if (avgDuration > 0) {
+        promptDurationByPair.set(
+          pairKey,
+          (promptDurationByPair.get(pairKey) || 0) + avgDuration * count
+        );
+        promptCountByPair.set(
+          pairKey,
+          (promptCountByPair.get(pairKey) || 0) + count
+        );
+      }
+
+      const systemKey = String(systemVersion ?? "null");
+      promptTotalsBySystem.set(
+        systemKey,
+        (promptTotalsBySystem.get(systemKey) || 0) + count
+      );
+      if (status === "complete") {
+        promptCompleteBySystem.set(
+          systemKey,
+          (promptCompleteBySystem.get(systemKey) || 0) + count
+        );
+      }
+      if (avgDuration > 0) {
+        promptDurationBySystem.set(
+          systemKey,
+          (promptDurationBySystem.get(systemKey) || 0) + avgDuration * count
+        );
+        promptCountBySystem.set(
+          systemKey,
+          (promptCountBySystem.get(systemKey) || 0) + count
+        );
+      }
+
+      const userKey = String(userVersion ?? "null");
+      promptTotalsByUser.set(userKey, (promptTotalsByUser.get(userKey) || 0) + count);
+      if (status === "complete") {
+        promptCompleteByUser.set(
+          userKey,
+          (promptCompleteByUser.get(userKey) || 0) + count
+        );
+      }
+      if (avgDuration > 0) {
+        promptDurationByUser.set(
+          userKey,
+          (promptDurationByUser.get(userKey) || 0) + avgDuration * count
+        );
+        promptCountByUser.set(
+          userKey,
+          (promptCountByUser.get(userKey) || 0) + count
+        );
+      }
+    });
+
+    const promptPerformance = {
+      byPair: Array.from(promptTotalsByPair.entries()).map(([key, totalCount]) => {
+        const [systemVersionRaw, userVersionRaw] = key.split("|");
+        const systemVersion = systemVersionRaw === "null" ? null : Number(systemVersionRaw);
+        const userVersion = userVersionRaw === "null" ? null : Number(userVersionRaw);
+        const completeCount = promptCompleteByPair.get(key) || 0;
+        const durationTotal = promptDurationByPair.get(key) || 0;
+        const durationCount = promptCountByPair.get(key) || 0;
+        return {
+          systemPromptVersion: Number.isNaN(systemVersion) ? null : systemVersion,
+          userPromptVersion: Number.isNaN(userVersion) ? null : userVersion,
+          completeRate: totalCount ? completeCount / totalCount : 0,
+          avgDurationMs: durationCount ? Math.round(durationTotal / durationCount) : 0,
+        };
+      }),
+      bySystemVersion: Array.from(promptTotalsBySystem.entries()).map(
+        ([key, totalCount]) => {
+          const systemVersion = key === "null" ? null : Number(key);
+          const completeCount = promptCompleteBySystem.get(key) || 0;
+          const durationTotal = promptDurationBySystem.get(key) || 0;
+          const durationCount = promptCountBySystem.get(key) || 0;
+          return {
+            version: Number.isNaN(systemVersion) ? null : systemVersion,
+            completeRate: totalCount ? completeCount / totalCount : 0,
+            avgDurationMs: durationCount ? Math.round(durationTotal / durationCount) : 0,
+          };
+        }
+      ),
+      byUserVersion: Array.from(promptTotalsByUser.entries()).map(
+        ([key, totalCount]) => {
+          const userVersion = key === "null" ? null : Number(key);
+          const completeCount = promptCompleteByUser.get(key) || 0;
+          const durationTotal = promptDurationByUser.get(key) || 0;
+          const durationCount = promptCountByUser.get(key) || 0;
+          return {
+            version: Number.isNaN(userVersion) ? null : userVersion,
+            completeRate: totalCount ? completeCount / totalCount : 0,
+            avgDurationMs: durationCount ? Math.round(durationTotal / durationCount) : 0,
+          };
+        }
+      ),
+    };
+
     return res.status(200).json({
       totals: {
         total,
@@ -273,6 +411,7 @@ async function getAnalytics(req, res) {
           count: item.count,
         })),
       },
+      promptPerformance,
       topBrowsers: toSortedCounts(browserCounts),
       topDevices: toSortedCounts(deviceCounts),
       usage: {
