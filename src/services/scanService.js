@@ -1,7 +1,6 @@
 const { Submission } = require("../models");
-const { llmOutputSchema } = require("../validators/schemas");
 const { getActivePrompt } = require("./promptService");
-const { runScanAgent, parseMaybeJson } = require("./scanAgent");
+const { runScanAgent } = require("./scanAgent");
 const { sendCustomerEmail, sendOwnerEmail } = require("./emailService");
 
 // Sanitize error messages to prevent information disclosure
@@ -39,19 +38,6 @@ function runScanAgentWithTimeout(params) {
       clearTimeout(timeoutId);
     }
   });
-}
-
-function extractAgentOutput(result) {
-  if (!result) {
-    return null;
-  }
-  if (result.output) {
-    return result.output;
-  }
-  if (result.response) {
-    return result.response;
-  }
-  return result;
 }
 
 async function sendCompletionEmails(submission) {
@@ -123,7 +109,12 @@ async function processSubmission(submissionId) {
       getActivePrompt("user"),
     ]);
 
-    if (!systemPrompt || !userPrompt) {
+    if (
+      !systemPrompt ||
+      !userPrompt ||
+      !systemPrompt.content ||
+      !userPrompt.content
+    ) {
       submission.status = "failed";
       submission.failure = {
         message: "Active prompts not configured.",
@@ -140,27 +131,23 @@ async function processSubmission(submissionId) {
       systemPrompt: systemPrompt.content,
       userPrompt: userPrompt.content,
       formInputs: submission.inputs,
+      runMeta: { submissionId: String(submission._id) },
     });
     submission.processing.llmDurationMs = Date.now() - llmStart;
 
-    const tokenUsage = result?.tokenUsage || null;
-    const extracted = extractAgentOutput(result);
-    const parsed = parseMaybeJson(extracted);
-    const validated = llmOutputSchema.safeParse(parsed);
-
-    if (!validated.success) {
+    if (!result || result.error || !result.output) {
       submission.status = "failed";
       submission.failure = {
-        message: "LLM output did not match schema.",
-        rawOutput: extracted,
+        message: result?.error || "LLM output missing or invalid.",
+        rawOutput: result?.rawOutput ?? null,
       };
       await submission.save();
       return;
     }
 
     submission.status = "complete";
-    submission.outputs = validated.data;
-    submission.usage = tokenUsage;
+    submission.outputs = result.output;
+    submission.usage = result.tokenUsage || null;
     submission.promptRefs = {
       systemPromptId: systemPrompt._id,
       userPromptId: userPrompt._id,

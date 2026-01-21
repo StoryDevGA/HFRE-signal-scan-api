@@ -115,7 +115,7 @@ test("processSubmission stores outputs and sends emails on success", async () =>
           : { _id: "user", version: 1, content: "user" },
     },
     scanAgent: {
-      runScanAgent: async () => output,
+      runScanAgent: async () => ({ output }),
     },
     emailService: {
       sendCustomerEmail: async () => {
