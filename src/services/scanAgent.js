@@ -66,11 +66,40 @@ function parseMaybeJson(value) {
   if (typeof value !== "string") {
     return value;
   }
-  try {
-    return JSON.parse(value);
-  } catch (error) {
-    return value;
+  const trimmed = value.trim();
+
+  const tryParse = (candidate) => {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      return null;
+    }
+  };
+
+  const direct = tryParse(trimmed);
+  if (direct !== null) {
+    return direct;
   }
+
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenceMatch && fenceMatch[1]) {
+    const fenced = tryParse(fenceMatch[1].trim());
+    if (fenced !== null) {
+      return fenced;
+    }
+  }
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const sliced = trimmed.slice(firstBrace, lastBrace + 1);
+    const bracketed = tryParse(sliced);
+    if (bracketed !== null) {
+      return bracketed;
+    }
+  }
+
+  return value;
 }
 
 function normalizeFormInputs(formInputs) {
@@ -96,6 +125,14 @@ function estimateInputSize(state) {
     formInputsSize = 0;
   }
   return systemPrompt.length + userPrompt.length + formInputsSize;
+}
+
+function getResponseFormat() {
+  const raw = (process.env.LLM_RESPONSE_FORMAT || "").trim().toLowerCase();
+  if (raw === "json" || raw === "json_object") {
+    return { type: "json_object" };
+  }
+  return null;
 }
 
 function selectModelName(state) {
@@ -143,22 +180,42 @@ async function invokeLLMNode(state) {
   try {
     const modelName = selectModelName(state);
     const temperature = Number(process.env.LLM_TEMPERATURE || "0.2");
+    const maxTokens = Number(process.env.LLM_MAX_TOKENS || "0");
+    const outputGuard =
+      "\n\nReturn only valid JSON. Do not include Markdown or code fences.";
+    const responseFormat = getResponseFormat();
 
     const model = new ChatOpenAI({
       modelName: modelName.replace("openai:", ""),
       temperature,
+      maxTokens: maxTokens > 0 ? maxTokens : undefined,
       openAIApiKey: process.env.OPENAI_API_KEY,
     });
 
     const messages = [
-      { role: "system", content: state.systemPrompt },
+      { role: "system", content: `${state.systemPrompt}${outputGuard}` },
       {
         role: "user",
         content: interpolatePrompt(state.userPrompt, state.formInputs),
       },
     ];
 
-    const response = await model.invoke(messages);
+    let response;
+    if (responseFormat) {
+      try {
+        response = await model.invoke(messages, {
+          response_format: responseFormat,
+        });
+      } catch (error) {
+        console.warn("response_format failed; retrying without it.", {
+          runMeta: state.runMeta,
+          stage: "invoke_llm",
+        });
+        response = await model.invoke(messages);
+      }
+    } else {
+      response = await model.invoke(messages);
+    }
     const tokenUsage =
       response?.response_metadata?.tokenUsage ||
       response?.usage_metadata ||
@@ -213,6 +270,10 @@ async function parseOutputNode(state) {
   } catch (error) {
     console.error("Parse error:", {
       error,
+      rawOutputSnippet:
+        typeof state.rawOutput === "string"
+          ? state.rawOutput.slice(0, 300)
+          : String(state.rawOutput || "").slice(0, 300),
       runMeta: state.runMeta,
       stage: "parse_output",
     });
@@ -233,6 +294,10 @@ async function validateOutputNode(state) {
   if (!validated.success) {
     console.error("LLM output schema validation failed:", {
       issues: validated.error.issues,
+      rawOutputSnippet:
+        typeof state.rawOutput === "string"
+          ? state.rawOutput.slice(0, 300)
+          : String(state.rawOutput || "").slice(0, 300),
       runMeta: state.runMeta,
       stage: "validate_output",
     });
