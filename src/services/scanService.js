@@ -134,6 +134,7 @@ async function processSubmission(submissionId) {
       runMeta: { submissionId: String(submission._id) },
     });
     submission.processing.llmDurationMs = Date.now() - llmStart;
+    submission.processing.llmModel = result?.modelName || null;
 
     if (!result || result.error || !result.output) {
       submission.status = "failed";

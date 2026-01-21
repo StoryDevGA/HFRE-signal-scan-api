@@ -47,6 +47,7 @@ async function listSubmissions(req, res) {
       items: items.map((item) => ({
         ...item,
         failureMessage: item.failure?.message || "",
+        llmModelUsed: item.processing?.llmModel || "",
       })),
       page,
       pageSize,
@@ -75,6 +76,7 @@ async function getSubmission(req, res) {
       submission,
       analytics,
       failureMessage: submission.failure?.message || "",
+      llmModelUsed: submission.processing?.llmModel || "",
     });
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch submission." });

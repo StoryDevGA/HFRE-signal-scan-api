@@ -65,6 +65,7 @@ const submissionSchema = new mongoose.Schema(
       startedAt: { type: Date },
       completedAt: { type: Date },
       llmDurationMs: { type: Number },
+      llmModel: { type: String },
       totalDurationMs: { type: Number },
     },
     retry: {
