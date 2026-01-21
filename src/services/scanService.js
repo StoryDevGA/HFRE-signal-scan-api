@@ -135,6 +135,8 @@ async function processSubmission(submissionId) {
     });
     submission.processing.llmDurationMs = Date.now() - llmStart;
     submission.processing.llmModel = result?.modelName || null;
+    submission.processing.llmTemperature =
+      typeof result?.temperature === "number" ? result.temperature : null;
 
     if (!result || result.error || !result.output) {
       submission.status = "failed";

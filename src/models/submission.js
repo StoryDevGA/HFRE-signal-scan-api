@@ -66,6 +66,7 @@ const submissionSchema = new mongoose.Schema(
       completedAt: { type: Date },
       llmDurationMs: { type: Number },
       llmModel: { type: String },
+      llmTemperature: { type: Number },
       totalDurationMs: { type: Number },
     },
     retry: {

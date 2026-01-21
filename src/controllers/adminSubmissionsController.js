@@ -48,6 +48,10 @@ async function listSubmissions(req, res) {
         ...item,
         failureMessage: item.failure?.message || "",
         llmModelUsed: item.processing?.llmModel || "",
+        llmTemperatureUsed:
+          typeof item.processing?.llmTemperature === "number"
+            ? item.processing.llmTemperature
+            : null,
       })),
       page,
       pageSize,
@@ -77,6 +81,10 @@ async function getSubmission(req, res) {
       analytics,
       failureMessage: submission.failure?.message || "",
       llmModelUsed: submission.processing?.llmModel || "",
+      llmTemperatureUsed:
+        typeof submission.processing?.llmTemperature === "number"
+          ? submission.processing.llmTemperature
+          : null,
     });
   } catch (error) {
     return res.status(500).json({ error: "Failed to fetch submission." });

@@ -39,6 +39,7 @@ const scanGraphStateSchema = z
     error: z.string().nullable().optional(),
     stage: z.string().nullable().optional(),
     modelName: z.string().nullable().optional(),
+    temperature: z.number().nullable().optional(),
     runMeta: runMetaSchema.optional(),
   })
   .strict();
@@ -182,6 +183,7 @@ async function invokeLLMNode(state) {
       rawOutput: content,
       tokenUsage,
       modelName,
+      temperature,
       error: null,
       stage: "invoke_llm",
     };
@@ -276,6 +278,7 @@ function buildScanGraph() {
       error: { value: (x, y) => y ?? x ?? null },
       stage: { value: (x, y) => y ?? x ?? null },
       modelName: { value: (x, y) => y ?? x ?? null },
+      temperature: { value: (x, y) => y ?? x ?? null },
       runMeta: { value: (x, y) => y ?? x ?? null },
     },
   });
@@ -324,6 +327,7 @@ async function runScanAgent({ systemPrompt, userPrompt, formInputs, runMeta }) {
     error: null,
     stage: null,
     modelName: null,
+    temperature: null,
   });
 
   return {
@@ -334,6 +338,8 @@ async function runScanAgent({ systemPrompt, userPrompt, formInputs, runMeta }) {
     error: result.error || null,
     stage: result.stage || null,
     modelName: result.modelName || null,
+    temperature:
+      typeof result.temperature === "number" ? result.temperature : null,
   };
 }
 
