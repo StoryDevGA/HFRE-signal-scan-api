@@ -9,7 +9,7 @@ Implement a Node/Express backend that:
 4) Emails the customer a copy and notifies business owners.  
 5) Provides a restricted Admin API (max 3 admins) for dashboard operations.
 
-The agent workflow to mirror is **Start (form) -> Signal Scan LLM Agent -> JSON output**, as defined by the AgentFlow JSON. 
+The agent workflow is implemented as a LangGraph state machine: **validate input -> invoke LLM -> parse output -> validate schema -> handle error/complete**.
 
 ---
 
@@ -18,13 +18,37 @@ The agent workflow to mirror is **Start (form) -> Signal Scan LLM Agent -> JSON 
 - Node.js + Express
 - MongoDB (Mongoose)
 - Email provider: Resend (current)
-- LLM provider: LangChain initChatModel (LLM-agnostic)
+- LLM orchestration: LangGraph StateGraph + LangChain ChatOpenAI (@langchain/openai)
 - Security:
   - Helmet
   - CORS (origin echo + credentials)
   - Rate limiting (admin login)
   - Input validation (Zod)
   - Session cookie auth (in-memory)
+
+## 2.1 Environment Variables
+
+Required:
+- `OPENAI_API_KEY`
+- `RESEND_API_KEY`
+- `EMAIL_FROM`
+- `EMAIL_TO_OWNERS`
+- `ADMIN_EMAILS` (comma-separated, max 3)
+- `ADMIN_PASSWORD_HASH` (bcrypt hash)
+
+LLM configuration:
+- `LLM_MODEL_SMALL` (default: `gpt-4o-mini`)
+- `LLM_MODEL_LARGE` (default: `gpt-4o`)
+- `LLM_LARGE_THRESHOLD` (character count; default: `6000`)
+- `LLM_MODEL` (fallback for small model if `LLM_MODEL_SMALL` is unset)
+- `LLM_TEMPERATURE` (default: `0.2`)
+- `LLM_MAX_TOKENS` (optional; 0 disables maxTokens)
+- `LLM_RESPONSE_FORMAT` (`json` or `json_object` to enable strict JSON mode)
+- `LLM_TIMEOUT_MS` (default: `60000`)
+
+Other:
+- `PENDING_RETRY_MS` (default: `60000`)
+- `NODE_ENV` (`production` enables secure cookies)
 
 ---
 
@@ -49,10 +73,10 @@ The LLM must return **one JSON object** with this shape (do not output anything 
 ```
 
 Backend responsibilities:
-- Validate the returned JSON strictly (schema validation).
+- Validate the returned JSON strictly (schema validation inside the agent graph).
 - If invalid, mark submission as `failed` and persist the raw response for debugging (admin-only).
 - Ensure `customer_report` is safe for public display and email (per prompt constraints).
-- Model output may arrive as a string; parse JSON before validation.
+- Model output may arrive as a string; parse JSON before validation (supports fenced JSON and bracketed extraction).
 
 ---
 
@@ -64,7 +88,7 @@ Backend responsibilities:
 Stores the public scan requests and results.
 
 Fields:
-- `publicId` (string, unique, unguessable; e.g., nanoid(16-24))
+- `publicId` (string, unique, unguessable; 24-char hex from 12 random bytes)
 - `status` (`pending | complete | failed`)
 - `inputs`:  
   - `name`
@@ -78,6 +102,7 @@ Fields:
   - `internal_report` (admin-only exposure)
   - `customer_report` (public exposure allowed)
   - `metadata`
+- `usage` (token usage or provider metadata; mixed shape)
 - `promptRefs`:
   - `systemPromptId`
   - `userPromptId`
@@ -87,10 +112,20 @@ Fields:
   - `customerSentAt`
   - `ownerSentAt`
   - `lastError`
-- `createdAt`, `updatedAt`
 - `failure`:
   - `message`
   - `rawOutput` (optional)
+- `processing`:
+  - `startedAt`
+  - `completedAt`
+  - `llmDurationMs`
+  - `llmModel`
+  - `llmTemperature`
+  - `totalDurationMs`
+- `retry`:
+  - `retriedAt`
+  - `retryCount`
+- `createdAt`, `updatedAt`
 
 Indexes:
 - `publicId` unique
@@ -105,12 +140,12 @@ Fields:
 - `type`: `system | user`
 - `name` (string)
 - `content` (string)
-- `active` (boolean)
+- `isActive` (boolean)
 - `version` (integer) optional
 - `createdAt`, `updatedAt`
 
 Constraint (recommended):
-- Only one active prompt per type at any time.
+- Only one prompt per type is allowed; create returns 409 if one exists. Use updates to change content/activate.
 
 #### `analytics`
 Stores telemetry per submission.
@@ -122,6 +157,12 @@ Fields:
 - `acceptLanguage` (string optional)
 - `referrer` (string optional)
 - `deviceSummary` (string optional derived)
+- `client` (optional geo metadata):
+  - `country`
+  - `region`
+  - `city`
+  - `timezone`
+  - `ipAnonymized`
 - `createdAt`
 
 Indexes:
@@ -160,7 +201,7 @@ Implementation approach:
 - No admin self-service registration.
 
 Security notes:
-- Add rate limit on login endpoint.
+- Login rate limit: 5 attempts per 15 minutes per IP.
 - Log admin authentication attempts in `adminAudit` (optional).
 
 ---
@@ -176,8 +217,9 @@ Security notes:
 3) Backend executes LLM call:
    - Load active system + user prompt from `prompts`
    - Interpolate form inputs into the user message template
-   - Invoke LLM
-4) Validate LLM output JSON:
+   - Invoke the LangGraph scan agent (validate input -> invoke -> parse -> validate -> handle error)
+   - Model selection is dynamic (small vs large) based on input size threshold
+4) Validate LLM output JSON (inside the agent graph):
    - If valid:
      - Persist to `submission.outputs`
      - Set `status=complete`
@@ -236,7 +278,7 @@ Response variants:
 - `200` complete: returns public result model (no internal_report)
 - `202` pending: `{ status: "pending" }`
 - `404` not found: `{ status: "not_found" }`
-- `500` failed: `{ status: "failed" }` (do not leak internal details)
+- `500` failed: `{ status: "failed", message: "string" }` (message may be empty)
 
 ### 8.2 Admin Auth API
 
@@ -244,6 +286,8 @@ Response variants:
 Body: `{ email, password }`  
 Response: `{ ok: true }`  
 Sets httpOnly cookie.
+Validation errors:
+- `400` `{ errors: [ { path, message } ] }`
 
 #### `POST /api/admin/auth/logout`
 Clears cookie.
@@ -258,6 +302,7 @@ Query:
 - `status`
 - `page`, `pageSize`
 Response: list + pagination metadata.
+Each item includes `failureMessage`, `llmModelUsed`, and `llmTemperatureUsed` (admin-only).
 
 #### `GET /api/admin/submissions/:id`
 Returns full submission:
@@ -266,6 +311,7 @@ Returns full submission:
 - metadata
 - email status
 - analytics (joined in response)
+Response also includes `failureMessage`, `llmModelUsed`, and `llmTemperatureUsed`.
 
 #### `DELETE /api/admin/submissions/:id`
 Deletes submission and associated analytics.
@@ -277,9 +323,11 @@ Returns all prompts with active state.
 
 #### `POST /api/admin/prompts`
 Creates a new prompt.
+Note: Only one prompt per type is allowed; create returns 409 if a prompt already exists.
 
 #### `PUT /api/admin/prompts/:id`
 Edits prompt fields.
+If `content` changes, the backend increments the prompt `version`.
 
 #### `DELETE /api/admin/prompts/:id`
 Deletes prompt (block deleting currently-active prompt).
@@ -291,6 +339,8 @@ Deletes:
 - submissions where `inputs.email` matches
 - associated analytics
 Returns `{ deletedSubmissions: n }`
+Validation error:
+- `400` `{ "error": "Email is required." }`
 
 ### 8.6 Admin Analytics
 
@@ -380,7 +430,7 @@ Responses:
 ```
 ```
 500
-{ "status": "failed" }
+{ "status": "failed", "message": "string" }
 ```
 
 ### Admin: Login
@@ -403,6 +453,11 @@ Error:
 401
 { "error": "Invalid credentials." }
 ```
+Validation error:
+```
+400
+{ "errors": [ { "path": "email", "message": "string" } ] }
+```
 
 ### Admin: Logout
 Request:
@@ -424,7 +479,14 @@ Response:
 ```
 200
 {
-  "items": [ "submission" ],
+  "items": [
+    {
+      "...submissionFields": true,
+      "failureMessage": "",
+      "llmModelUsed": "",
+      "llmTemperatureUsed": 0
+    }
+  ],
   "page": 1,
   "pageSize": 20,
   "total": 0,
@@ -442,7 +504,10 @@ Response:
 200
 {
   "submission": { "publicId": "string", "inputs": {}, "outputs": {}, "emailStatus": {}, "promptRefs": {} },
-  "analytics": { "submissionId": "string", "ipAddress": "string", "userAgent": "string" }
+  "analytics": { "submissionId": "string", "ipAddress": "string", "userAgent": "string" },
+  "failureMessage": "",
+  "llmModelUsed": "",
+  "llmTemperatureUsed": 0
 }
 ```
 
@@ -470,7 +535,7 @@ Content-Type: application/json
   "type": "system|user",
   "name": "string",
   "content": "string",
-  "active": true,
+  "isActive": true,
   "version": 1
 }
 ```
@@ -478,7 +543,7 @@ Update:
 ```
 PUT /api/admin/prompts/:id
 Content-Type: application/json
-{ "name": "string", "content": "string", "active": true, "version": 2 }
+{ "name": "string", "content": "string", "isActive": true, "version": 2 }
 ```
 Delete:
 ```
@@ -499,10 +564,52 @@ Response:
 ```
 200
 {
-  "totals": { "total": 0, "pending": 0, "complete": 0, "failed": 0, "conversionRate": 0 },
-  "countsByDay": [ { "date": "YYYY-MM-DD", "count": 0 } ],
+  "totals": {
+    "total": 0,
+    "pending": 0,
+    "complete": 0,
+    "failed": 0,
+    "conversionRate": 0,
+    "completeRate": 0,
+    "failedRate": 0
+  },
+  "countsByDay": [ { "date": "YYYY-MM-DD", "total": 0, "pending": 0, "complete": 0, "failed": 0 } ],
+  "latencyMs": { "p50": 0, "p90": 0, "p95": 0, "max": 0 },
+  "latencyByDay": [ { "date": "YYYY-MM-DD", "p50": 0, "p90": 0 } ],
+  "failures": {
+    "topFailures": [ { "message": "string", "count": 0 } ],
+    "failureRate": 0,
+    "failureByPromptVersion": [
+      { "systemPromptVersion": 1, "userPromptVersion": 1, "count": 0 }
+    ]
+  },
+  "promptPerformance": {
+    "byPair": [
+      { "systemPromptVersion": 1, "userPromptVersion": 1, "completeRate": 0, "avgDurationMs": 0 }
+    ],
+    "bySystemVersion": [ { "version": 1, "completeRate": 0, "avgDurationMs": 0 } ],
+    "byUserVersion": [ { "version": 1, "completeRate": 0, "avgDurationMs": 0 } ]
+  },
+  "retries": {
+    "totalRetries": 0,
+    "retriesPerDay": [ { "date": "YYYY-MM-DD", "retries": 0 } ],
+    "retrySuccessRate": 0
+  },
   "topBrowsers": [ { "key": "Chrome", "count": 0 } ],
-  "topDevices": [ { "key": "Desktop", "count": 0 } ]
+  "topDevices": [ { "key": "Desktop", "count": 0 } ],
+  "topReferrers": [ { "key": "Direct", "count": 0 } ],
+  "topCountries": [ { "key": "US", "count": 0 } ],
+  "usage": {
+    "promptTokens": 0,
+    "completionTokens": 0,
+    "totalTokens": 0,
+    "submissionsWithUsage": 0,
+    "averagePromptTokens": 0,
+    "averageCompletionTokens": 0,
+    "averageTotalTokens": 0,
+    "bySystemVersion": [ { "version": 1, "avgTotalTokens": 0 } ],
+    "byUserVersion": [ { "version": 1, "avgTotalTokens": 0 } ]
+  }
 }
 ```
 Per-submission:
@@ -622,11 +729,12 @@ System + user message strategy:
 - System message: global constraints.
 - User message: embed the form inputs and strict output instructions.
 
-The provided AgentFlow example includes:
+Prompt guidance:
 - Form input injection tokens (e.g., `{{ $form.company_name }}` etc.)
-- Strict output JSON format + content rules (internal vs customer layers). 
+- Strict output JSON format + content rules (internal vs customer layers)
+- A JSON-only guard is appended at runtime to prevent code fences or extra text.
 
-Backend must implement equivalent prompt interpolation using the stored active prompts plus current form inputs.
+Backend interpolates stored prompts with current form inputs before invoking the graph.
 
 ---
 
@@ -635,6 +743,7 @@ Backend must implement equivalent prompt interpolation using the stored active p
 Minimum:
 - Structured logging per request (`requestId`, route, status)
 - Capture LLM latency and token usage (if available)
+- Persist LLM model and temperature used per submission (`processing.llmModel`, `processing.llmTemperature`)
 - Store failed model raw output for admin debugging only
 - Health endpoint: `GET /health`
 Current behavior:
@@ -661,6 +770,7 @@ Current behavior:
 - LLM output is validated against strict JSON schema. 
 - Customer-safe results available via publicId without leaking internal_report.
 - Emails send on successful completion; statuses persisted.
+- LLM model and temperature used are stored per submission.
 - Admin auth restricted to allowlist (max 3 emails) and fixed hashed password.
 - Admin endpoints support: view outcomes, prompt CRUD, delete user data, view analytics.
 
