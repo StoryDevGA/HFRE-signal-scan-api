@@ -12,6 +12,13 @@ const AGENT_FILE = path.resolve(
   "../../../HFRE-Signal-scan V4 Agents.json"
 );
 
+function buildPromptName(label, ownerEmail, timestamp) {
+  const safeLabel = String(label || "").trim();
+  const safeOwner = String(ownerEmail || "").trim().toLowerCase();
+  const safeTimestamp = new Date(timestamp || new Date()).toISOString();
+  return `${safeLabel} | ${safeOwner} | ${safeTimestamp}`;
+}
+
 async function loadMessages() {
   const raw = fs.readFileSync(AGENT_FILE, "utf8");
   const data = JSON.parse(raw);
@@ -34,6 +41,12 @@ async function loadMessages() {
 
 async function seedPrompts() {
   const { system, user } = await loadMessages();
+  const ownerEmail = String(process.env.SEED_PROMPT_OWNER_EMAIL || "seed@system")
+    .trim()
+    .toLowerCase();
+  const lockNote = String(
+    process.env.SEED_PROMPT_LOCK_NOTE || "Default published prompt (locked)"
+  ).trim();
   const [hasSystem, hasUser] = await Promise.all([
     Prompt.findOne({ type: "system" }),
     Prompt.findOne({ type: "user" }),
@@ -41,21 +54,31 @@ async function seedPrompts() {
 
   const inserts = [];
   if (!hasSystem) {
+    const label = "HFRE Signal Scan v4 System";
     inserts.push({
       type: "system",
-      name: "HFRE Signal Scan v4 System",
+      ownerEmail,
+      label,
+      name: buildPromptName(label, ownerEmail, new Date()),
       content: system,
       isActive: true,
-      version: 4,
+      isLocked: true,
+      lockNote,
+      version: 0,
     });
   }
   if (!hasUser) {
+    const label = "HFRE Signal Scan v4 User";
     inserts.push({
       type: "user",
-      name: "HFRE Signal Scan v4 User",
+      ownerEmail,
+      label,
+      name: buildPromptName(label, ownerEmail, new Date()),
       content: user,
       isActive: true,
-      version: 4,
+      isLocked: true,
+      lockNote,
+      version: 0,
     });
   }
 

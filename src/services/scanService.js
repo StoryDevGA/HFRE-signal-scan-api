@@ -1,5 +1,5 @@
 const { Submission } = require("../models");
-const { getActivePrompt } = require("./promptService");
+const { getPublishedPrompt } = require("./promptService");
 const { runScanAgent } = require("./scanAgent");
 const { sendCustomerEmail, sendOwnerEmail } = require("./emailService");
 
@@ -38,6 +38,20 @@ function runScanAgentWithTimeout(params) {
       clearTimeout(timeoutId);
     }
   });
+}
+
+function getTotalDurationMs(submission, completedAt) {
+  if (!completedAt) {
+    return null;
+  }
+
+  const start =
+    submission?.createdAt || submission?.processing?.startedAt || null;
+  if (!start) {
+    return null;
+  }
+
+  return completedAt.getTime() - start.getTime();
 }
 
 async function sendCompletionEmails(submission) {
@@ -105,8 +119,8 @@ async function processSubmission(submissionId) {
 
   try {
     const [systemPrompt, userPrompt] = await Promise.all([
-      getActivePrompt("system"),
-      getActivePrompt("user"),
+      getPublishedPrompt("system"),
+      getPublishedPrompt("user"),
     ]);
 
     if (
@@ -117,11 +131,13 @@ async function processSubmission(submissionId) {
     ) {
       submission.status = "failed";
       submission.failure = {
-        message: "Active prompts not configured.",
+        message: "Published prompts not configured.",
       };
       submission.processing.completedAt = new Date();
-      submission.processing.totalDurationMs =
-        submission.processing.completedAt.getTime() - submission.createdAt.getTime();
+      submission.processing.totalDurationMs = getTotalDurationMs(
+        submission,
+        submission.processing.completedAt
+      );
       await submission.save();
       return;
     }
@@ -159,8 +175,10 @@ async function processSubmission(submissionId) {
     };
     submission.failure = undefined;
     submission.processing.completedAt = new Date();
-    submission.processing.totalDurationMs =
-      submission.processing.completedAt.getTime() - submission.createdAt.getTime();
+    submission.processing.totalDurationMs = getTotalDurationMs(
+      submission,
+      submission.processing.completedAt
+    );
     await submission.save();
     await sendCompletionEmails(submission);
   } catch (error) {
@@ -171,8 +189,10 @@ async function processSubmission(submissionId) {
     };
     submission.processing = submission.processing || {};
     submission.processing.completedAt = new Date();
-    submission.processing.totalDurationMs =
-      submission.processing.completedAt.getTime() - submission.createdAt.getTime();
+    submission.processing.totalDurationMs = getTotalDurationMs(
+      submission,
+      submission.processing.completedAt
+    );
     await submission.save();
   }
 }

@@ -138,14 +138,23 @@ Stores editable prompts for system and user roles.
 Fields:
 - `_id`
 - `type`: `system | user`
-- `name` (string)
+- `ownerEmail` (string)
+- `label` (string; admin-provided)
+- `name` (string; derived `label | ownerEmail | timestamp`)
 - `content` (string)
-- `isActive` (boolean)
-- `version` (integer) optional
+- `isActive` (boolean; published flag)
+- `publishedAt` (date)
+- `publishedBy` (string)
+- `isLocked` (boolean; prevents edits/deletes)
+- `lockNote` (string; optional UI note)
+- `version` (number; starts at 0.0 and increments by 0.5 when content changes)
 - `createdAt`, `updatedAt`
 
-Constraint (recommended):
-- Only one prompt per type is allowed; create returns 409 if one exists. Use updates to change content/activate.
+Constraints:
+- Max **4 prompts per admin per type** (4 system + 4 user per admin).
+- Only **one published prompt per type** at a time (global).
+- Any admin can publish any prompt; only owners can edit/delete their prompts.
+- Locked prompts cannot be edited or deleted (publishing is still allowed).
 
 #### `analytics`
 Stores telemetry per submission.
@@ -178,6 +187,9 @@ Fields:
 - `target` (string)
 - `metadata` (object)
 - `createdAt`
+
+Common actions:
+- `prompt.create`, `prompt.update`, `prompt.delete`, `prompt.publish`
 
 ---
 
@@ -215,7 +227,7 @@ Security notes:
    - Creates `submission` with `status=pending` + `publicId`
    - Captures analytics (IP/UA etc.) into `analytics`
 3) Backend executes LLM call:
-   - Load active system + user prompt from `prompts`
+   - Load published system + user prompt from `prompts`
    - Interpolate form inputs into the user message template
    - Invoke the LangGraph scan agent (validate input -> invoke -> parse -> validate -> handle error)
    - Model selection is dynamic (small vs large) based on input size threshold
@@ -293,6 +305,8 @@ Validation errors:
 Clears cookie.
 #### `GET /api/admin/auth/logout`
 Clears cookie.
+#### `GET /api/admin/auth/me`
+Returns the current admin identity.
 
 ### 8.3 Admin Submissions API
 
@@ -319,18 +333,22 @@ Deletes submission and associated analytics.
 ### 8.4 Admin Prompts API
 
 #### `GET /api/admin/prompts`
-Returns all prompts with active state.
+Returns all prompts with published state and ownership.
 
 #### `POST /api/admin/prompts`
-Creates a new prompt.
-Note: Only one prompt per type is allowed; create returns 409 if a prompt already exists.
+Creates a new prompt owned by the authenticated admin.
+Limits: max 4 prompts per admin per type; returns 409 if limit exceeded.
+Prompt content validation rejects example JSON where `company`, `internal_report`, or `customer_report`
+are filled with literal values (must use placeholders like `"string"`).
 
 #### `PUT /api/admin/prompts/:id`
-Edits prompt fields.
-If `content` changes, the backend increments the prompt `version`.
+Edits prompt fields (owner only) and/or publishes the prompt (any admin).
+If `content` changes, the backend increments the prompt `version` by **0.5** (starting from **0.0**).
+Publishing sets `isActive=true` (API uses `isPublished` as alias). Unpublish is not supported; publish another prompt instead.
+Locked prompts cannot be edited (publish-only).
 
 #### `DELETE /api/admin/prompts/:id`
-Deletes prompt (block deleting currently-active prompt).
+Deletes prompt (owner only; cannot delete the last published prompt of that type).
 
 ### 8.5 Admin User Data Deletion
 
@@ -470,6 +488,22 @@ Response:
 { "ok": true }
 ```
 
+### Admin: Current Admin
+Request:
+```
+GET /api/admin/auth/me
+```
+Response:
+```
+200
+{ "email": "admin@example.com" }
+```
+Error:
+```
+401
+{ "error": "Unauthorized." }
+```
+
 ### Admin: List Submissions
 Request:
 ```
@@ -533,17 +567,17 @@ POST /api/admin/prompts
 Content-Type: application/json
 {
   "type": "system|user",
-  "name": "string",
+  "label": "string",
   "content": "string",
-  "isActive": true,
-  "version": 1
+  "isPublished": true
 }
 ```
+Note: `name` is accepted as a legacy alias for `label`, but new clients should send `label`.
 Update:
 ```
 PUT /api/admin/prompts/:id
 Content-Type: application/json
-{ "name": "string", "content": "string", "isActive": true, "version": 2 }
+{ "label": "string", "content": "string", "isPublished": true }
 ```
 Delete:
 ```
@@ -552,7 +586,7 @@ DELETE /api/admin/prompts/:id
 Delete error:
 ```
 400
-{ "error": "Disable active prompt before deleting." }
+{ "error": "Cannot delete the last active system prompt. Please activate another prompt first." }
 ```
 
 ### Admin: Analytics
@@ -766,13 +800,21 @@ Current behavior:
 ## 12. Acceptance Checklist (Backend)
 
 - Public scan submission persists inputs + analytics.
-- Active prompts are loaded from MongoDB and applied.
+- Published prompts are loaded from MongoDB and applied.
 - LLM output is validated against strict JSON schema. 
 - Customer-safe results available via publicId without leaking internal_report.
 - Emails send on successful completion; statuses persisted.
 - LLM model and temperature used are stored per submission.
 - Admin auth restricted to allowlist (max 3 emails) and fixed hashed password.
 - Admin endpoints support: view outcomes, prompt CRUD, delete user data, view analytics.
+
+## 13. Prompt Editing Checklist (Avoid “Inconclusive” Failures)
+
+- Keep the strict JSON output block, but only use placeholders (e.g., `"company": "string"`).
+- Do not include example outputs with real company names.
+- Avoid instructions that require browsing or “visible evidence” unless you add retrieval.
+- Ensure the user prompt injects form inputs (e.g., `{{$form.company_name}}`, `{{$form.product_name}}`).
+- Do not forbid inference entirely; allow reasonable inference from provided inputs.
 
 
 

@@ -25,20 +25,27 @@ const adminAuthSchema = z
 const promptCreateSchema = z
   .object({
     type: z.enum(["system", "user"]),
-    name: shortText,
+    label: shortText.optional(),
+    name: shortText.optional(),
     content: longText,
+    isPublished: z.boolean().optional(),
     isActive: z.boolean().optional(),
-    version: z.number().int().positive().optional(),
+    version: z.number().min(0).multipleOf(0.5).optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => Boolean(value.label || value.name), {
+    message: "Prompt label is required.",
+  });
 
 const promptUpdateSchema = z
   .object({
     type: z.enum(["system", "user"]).optional(),
+    label: shortText.optional(),
     name: shortText.optional(),
     content: longText.optional(),
+    isPublished: z.boolean().optional(),
     isActive: z.boolean().optional(),
-    version: z.number().int().positive().optional(),
+    version: z.number().min(0).multipleOf(0.5).optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {

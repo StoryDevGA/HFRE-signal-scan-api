@@ -3,9 +3,10 @@ const { ChatOpenAI } = require("@langchain/openai");
 const { z } = require("zod");
 const { llmOutputSchema, publicScanSchema } = require("../validators/schemas");
 
-// Validate API key at startup
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error("OPENAI_API_KEY environment variable is required");
+function ensureOpenAIKey() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY environment variable is required");
+  }
 }
 
 // Cached compiled graph (singleton)
@@ -378,6 +379,7 @@ function buildScanGraph() {
 
 // Main function to run the scan agent
 async function runScanAgent({ systemPrompt, userPrompt, formInputs, runMeta }) {
+  ensureOpenAIKey();
   const graph = buildScanGraph();
   
   const result = await graph.invoke({

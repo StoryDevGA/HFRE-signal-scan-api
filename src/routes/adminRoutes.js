@@ -1,5 +1,5 @@
 const express = require("express");
-const { login, logout } = require("../controllers/adminAuthController");
+const { login, logout, me } = require("../controllers/adminAuthController");
 const {
   getAnalytics,
   getAnalyticsForSubmission,
@@ -28,6 +28,7 @@ router.post("/auth/logout", logout);
 router.get("/auth/logout", logout);
 
 router.use(requireAdmin);
+router.get("/auth/me", me);
 router.get("/submissions", listSubmissions);
 router.get("/submissions/:id", getSubmission);
 router.delete("/submissions/:id", deleteSubmission);

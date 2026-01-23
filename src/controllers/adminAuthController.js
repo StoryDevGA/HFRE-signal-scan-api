@@ -43,4 +43,12 @@ async function logout(req, res) {
   return res.status(200).json({ ok: true });
 }
 
-module.exports = { login, logout };
+function me(req, res) {
+  if (!req.admin || !req.admin.email) {
+    return res.status(401).json({ error: "Unauthorized." });
+  }
+
+  return res.status(200).json({ email: req.admin.email });
+}
+
+module.exports = { login, logout, me };

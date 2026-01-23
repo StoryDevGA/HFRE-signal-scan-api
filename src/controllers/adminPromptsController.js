@@ -1,9 +1,10 @@
 const { Prompt } = require("../models");
-const { 
-  createPrompt, 
+const {
+  createPrompt,
   updatePrompt,
-  deletePrompt: deletePromptService 
+  deletePrompt: deletePromptService,
 } = require("../services/promptService");
+const { logAdminAction } = require("../services/adminAuditService");
 const {
   promptCreateSchema,
   promptUpdateSchema,
@@ -19,7 +20,11 @@ function formatZodErrors(error) {
 async function listPrompts(req, res) {
   try {
     const prompts = await Prompt.find().sort({ createdAt: -1 }).lean();
-    return res.status(200).json({ items: prompts });
+    const items = prompts.map((prompt) => ({
+      ...prompt,
+      isPublished: Boolean(prompt.isActive),
+    }));
+    return res.status(200).json({ items });
   } catch (error) {
     return res.status(500).json({ error: "Failed to load prompts." });
   }
@@ -32,20 +37,59 @@ async function createPromptHandler(req, res) {
   }
 
   try {
-    const existingCount = await Prompt.countDocuments({
-      type: parsed.data.type,
+    const ownerEmail = String(req.admin?.email || "").toLowerCase();
+    const label = parsed.data.label || parsed.data.name;
+    const publishFlag =
+      typeof parsed.data.isPublished === "boolean"
+        ? parsed.data.isPublished
+        : parsed.data.isActive;
+
+    const { prompt, publishInfo } = await createPrompt(
+      {
+        type: parsed.data.type,
+        label,
+        content: parsed.data.content,
+        ownerEmail,
+        isActive: Boolean(publishFlag),
+      },
+      ownerEmail
+    );
+
+    await logAdminAction({
+      adminEmail: ownerEmail,
+      action: "prompt.create",
+      target: `prompt:${prompt._id}`,
+      metadata: {
+        promptId: prompt._id,
+        type: prompt.type,
+        ownerEmail: prompt.ownerEmail,
+        label: prompt.label,
+        version: prompt.version,
+      },
     });
-    if (existingCount > 0) {
-      return res
-        .status(409)
-        .json({
-          error: "Prompt already exists for this type. Update it instead.",
-        });
+
+    if (publishInfo) {
+      await logAdminAction({
+        adminEmail: ownerEmail,
+        action: "prompt.publish",
+        target: `prompt:${prompt._id}`,
+        metadata: {
+          promptId: prompt._id,
+          type: prompt.type,
+          previousPublishedId: publishInfo.previousPublishedId,
+        },
+      });
     }
-    const prompt = await createPrompt(parsed.data);
-    return res.status(201).json(prompt);
+
+    return res.status(201).json({
+      ...prompt.toObject(),
+      isPublished: Boolean(prompt.isActive),
+    });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to create prompt." });
+    const status = error.status || 500;
+    return res
+      .status(status)
+      .json({ error: error.message || "Failed to create prompt." });
   }
 }
 
@@ -56,23 +100,101 @@ async function updatePromptHandler(req, res) {
   }
 
   try {
-    const prompt = await updatePrompt(req.params.id, parsed.data);
-    if (!prompt) {
+    const ownerEmail = String(req.admin?.email || "").toLowerCase();
+    const updates = {};
+
+    if (parsed.data.label || parsed.data.name) {
+      updates.label = parsed.data.label || parsed.data.name;
+    }
+
+    if (typeof parsed.data.content === "string") {
+      updates.content = parsed.data.content;
+    }
+
+    if (parsed.data.type) {
+      updates.type = parsed.data.type;
+    }
+
+    if (
+      typeof parsed.data.isPublished === "boolean" ||
+      typeof parsed.data.isActive === "boolean"
+    ) {
+      updates.isActive =
+        typeof parsed.data.isPublished === "boolean"
+          ? parsed.data.isPublished
+          : parsed.data.isActive;
+    }
+
+    const result = await updatePrompt(req.params.id, updates, ownerEmail);
+    if (!result) {
       return res.status(404).json({ error: "Prompt not found." });
     }
 
-    return res.status(200).json(prompt);
+    const { prompt, publishInfo } = result;
+
+    const didEdit =
+      "label" in updates || "content" in updates || "type" in updates;
+    if (didEdit) {
+      await logAdminAction({
+        adminEmail: ownerEmail,
+        action: "prompt.update",
+        target: `prompt:${prompt._id}`,
+        metadata: {
+          promptId: prompt._id,
+          type: prompt.type,
+          ownerEmail: prompt.ownerEmail,
+          label: prompt.label,
+          version: prompt.version,
+        },
+      });
+    }
+
+    if (publishInfo) {
+      await logAdminAction({
+        adminEmail: ownerEmail,
+        action: "prompt.publish",
+        target: `prompt:${prompt._id}`,
+        metadata: {
+          promptId: prompt._id,
+          type: prompt.type,
+          previousPublishedId: publishInfo.previousPublishedId,
+        },
+      });
+    }
+
+    return res.status(200).json({
+      ...prompt.toObject(),
+      isPublished: Boolean(prompt.isActive),
+    });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to update prompt." });
+    const status = error.status || 500;
+    return res
+      .status(status)
+      .json({ error: error.message || "Failed to update prompt." });
   }
 }
 
 async function deletePrompt(req, res) {
   try {
-    await deletePromptService(req.params.id);
+    const ownerEmail = String(req.admin?.email || "").toLowerCase();
+    const prompt = await deletePromptService(req.params.id, ownerEmail);
+
+    await logAdminAction({
+      adminEmail: ownerEmail,
+      action: "prompt.delete",
+      target: `prompt:${prompt._id}`,
+      metadata: {
+        promptId: prompt._id,
+        type: prompt.type,
+        ownerEmail: prompt.ownerEmail,
+        label: prompt.label,
+        version: prompt.version,
+      },
+    });
+
     return res.status(200).json({ ok: true });
   } catch (error) {
-    const status = error.message.includes("not found") ? 404 : 400;
+    const status = error.status || (error.message.includes("not found") ? 404 : 400);
     return res.status(status).json({ error: error.message });
   }
 }

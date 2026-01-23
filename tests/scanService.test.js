@@ -51,7 +51,7 @@ test("processSubmission marks failed when prompts missing", async () => {
       },
     },
     promptService: {
-      getActivePrompt: async () => null,
+      getPublishedPrompt: async () => null,
     },
     scanAgent: {
       runScanAgent: async () => ({}),
@@ -64,7 +64,7 @@ test("processSubmission marks failed when prompts missing", async () => {
 
   await processSubmission("fake");
   assert.equal(submission.status, "failed");
-  assert.equal(submission.failure?.message, "Active prompts not configured.");
+  assert.equal(submission.failure?.message, "Published prompts not configured.");
   clearMocks();
 });
 
@@ -109,7 +109,7 @@ test("processSubmission stores outputs and sends emails on success", async () =>
       },
     },
     promptService: {
-      getActivePrompt: async (type) =>
+      getPublishedPrompt: async (type) =>
         type === "system"
           ? { _id: "sys", version: 1, content: "system" }
           : { _id: "user", version: 1, content: "user" },
