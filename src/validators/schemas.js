@@ -72,10 +72,59 @@ const llmOutputSchema = z
   })
   .strict();
 
+const allowedLlmModels = [
+  "gpt-5.2",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-5.1",
+  "gpt-4.1",
+  "gpt-4o",
+  "gpt-4o-mini",
+];
+const allowedReasoningEfforts = ["none", "low", "medium", "high", "xhigh"];
+
+const llmConfigSchema = z
+  .object({
+    mode: z.enum(["fixed"]),
+    temperature: z.number().min(0).max(2).nullable(),
+    reasoningEffort: z.enum(allowedReasoningEfforts).nullable().optional(),
+    modelFixed: z.string().optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (!value.modelFixed) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["modelFixed"],
+        message: "modelFixed is required when mode is fixed.",
+      });
+      return;
+    }
+
+    if (String(value.modelFixed).toLowerCase() === "gpt-5.2-pro") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["modelFixed"],
+        message: "gpt-5.2-pro is not allowed for admin configuration.",
+      });
+      return;
+    }
+
+    if (!allowedLlmModels.includes(value.modelFixed)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["modelFixed"],
+        message: `Model must be one of: ${allowedLlmModels.join(", ")}`,
+      });
+    }
+  });
+
 module.exports = {
   publicScanSchema,
   adminAuthSchema,
   promptCreateSchema,
   promptUpdateSchema,
   llmOutputSchema,
+  llmConfigSchema,
+  allowedLlmModels,
 };

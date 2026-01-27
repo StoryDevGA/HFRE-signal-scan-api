@@ -79,3 +79,13 @@ structured output via Zod, and optional LangGraph memory via MemorySaver.
 - Unit tests for schemas and prompt interpolation.
 - Integration tests for submission lifecycle.
 - Mock LLM response to validate schema handling.
+
+2026-01-23 - Global LLM Config (Admin Managed)
+- Add llmConfig collection to store a single active config (mode, temperature, modelFixed, updatedBy).
+- Implement admin endpoints: GET/PUT /api/admin/llm-config.
+- Validation rules: fixed requires modelFixed.
+- Fallback to .env values when no llmConfig exists.
+- Audit all changes (llmConfig.update).
+
+2026-01-26 - One-off cleanup
+- Removed auto mode; LLM config now fixed-only.

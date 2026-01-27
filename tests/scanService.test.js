@@ -11,6 +11,10 @@ const promptServicePath = path.resolve(
   __dirname,
   "../src/services/promptService.js"
 );
+const llmConfigServicePath = path.resolve(
+  __dirname,
+  "../src/services/llmConfigService.js"
+);
 const scanAgentPath = path.resolve(
   __dirname,
   "../src/services/scanAgent.js"
@@ -24,6 +28,7 @@ function loadServiceWithMocks(mocks) {
   delete require.cache[scanServicePath];
   require.cache[modelsPath] = { exports: mocks.models };
   require.cache[promptServicePath] = { exports: mocks.promptService };
+  require.cache[llmConfigServicePath] = { exports: mocks.llmConfigService };
   require.cache[scanAgentPath] = { exports: mocks.scanAgent };
   require.cache[emailServicePath] = { exports: mocks.emailService };
   return require(scanServicePath);
@@ -33,6 +38,7 @@ function clearMocks() {
   delete require.cache[scanServicePath];
   delete require.cache[modelsPath];
   delete require.cache[promptServicePath];
+  delete require.cache[llmConfigServicePath];
   delete require.cache[scanAgentPath];
   delete require.cache[emailServicePath];
 }
@@ -52,6 +58,13 @@ test("processSubmission marks failed when prompts missing", async () => {
     },
     promptService: {
       getPublishedPrompt: async () => null,
+    },
+    llmConfigService: {
+      getLlmConfigWithFallback: async () => ({
+        mode: "fixed",
+        temperature: 0.2,
+        modelFixed: "gpt-5.2",
+      }),
     },
     scanAgent: {
       runScanAgent: async () => ({}),
@@ -113,6 +126,13 @@ test("processSubmission stores outputs and sends emails on success", async () =>
         type === "system"
           ? { _id: "sys", version: 1, content: "system" }
           : { _id: "user", version: 1, content: "user" },
+    },
+    llmConfigService: {
+      getLlmConfigWithFallback: async () => ({
+        mode: "fixed",
+        temperature: 0.2,
+        modelFixed: "gpt-5.2",
+      }),
     },
     scanAgent: {
       runScanAgent: async () => ({ output }),

@@ -11,6 +11,10 @@ const {
   updatePromptHandler,
 } = require("../controllers/adminPromptsController");
 const {
+  getLlmConfig,
+  updateLlmConfig,
+} = require("../controllers/adminLlmConfigController");
+const {
   deleteSubmission,
   getSubmission,
   listSubmissions,
@@ -29,6 +33,8 @@ router.get("/auth/logout", logout);
 
 router.use(requireAdmin);
 router.get("/auth/me", me);
+router.get("/llm-config", getLlmConfig);
+router.put("/llm-config", updateLlmConfig);
 router.get("/submissions", listSubmissions);
 router.get("/submissions/:id", getSubmission);
 router.delete("/submissions/:id", deleteSubmission);

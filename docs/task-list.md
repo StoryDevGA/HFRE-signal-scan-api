@@ -18,3 +18,6 @@
 16) Implement admin user deletion by email endpoint. (done)
 17) Add /health endpoint and structured logging with requestId. (done)
 18) Add tests for validation, prompt interpolation, and submission lifecycle. (done)
+
+2026-01-23
+- Global LLM config (model + temperature) admin endpoints and storage. (done)

@@ -9,6 +9,20 @@ function ensureOpenAIKey() {
   }
 }
 
+let cachedOpenAIClient = null;
+
+function getOpenAIClient() {
+  if (!cachedOpenAIClient) {
+    // Lazy load to avoid requiring openai during tests if not installed yet.
+    // eslint-disable-next-line global-require
+    const OpenAI = require("openai");
+    cachedOpenAIClient = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return cachedOpenAIClient;
+}
+
 // Cached compiled graph (singleton)
 let cachedGraph = null;
 
@@ -24,6 +38,7 @@ const scanGraphInputSchema = z
     systemPrompt: z.string().min(1),
     userPrompt: z.string().min(1),
     formInputs: publicScanSchema,
+    llmConfig: z.any().optional(),
     runMeta: runMetaSchema.optional(),
   })
   .strict();
@@ -33,6 +48,7 @@ const scanGraphStateSchema = z
     systemPrompt: z.string().min(1),
     userPrompt: z.string().min(1),
     formInputs: publicScanSchema,
+    llmConfig: z.any().optional(),
     rawOutput: z.any().nullable().optional(),
     parsedOutput: z.any().nullable().optional(),
     validatedOutput: llmOutputSchema.nullable().optional(),
@@ -116,18 +132,6 @@ function normalizeFormInputs(formInputs) {
   return formInputs;
 }
 
-function estimateInputSize(state) {
-  const systemPrompt = state.systemPrompt || "";
-  const userPrompt = state.userPrompt || "";
-  let formInputsSize = 0;
-  try {
-    formInputsSize = JSON.stringify(state.formInputs || {}).length;
-  } catch (error) {
-    formInputsSize = 0;
-  }
-  return systemPrompt.length + userPrompt.length + formInputsSize;
-}
-
 function getResponseFormat() {
   const raw = (process.env.LLM_RESPONSE_FORMAT || "").trim().toLowerCase();
   if (raw === "json" || raw === "json_object") {
@@ -136,13 +140,238 @@ function getResponseFormat() {
   return null;
 }
 
-function selectModelName(state) {
-  const smallModel =
-    process.env.LLM_MODEL_SMALL || process.env.LLM_MODEL || "gpt-4o-mini";
-  const largeModel = process.env.LLM_MODEL_LARGE || "gpt-4o";
-  const threshold = Number(process.env.LLM_LARGE_THRESHOLD || "6000");
-  const inputSize = estimateInputSize(state);
-  return inputSize >= threshold ? largeModel : smallModel;
+function parseBooleanEnv(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "true" || raw === "1" || raw === "yes") return true;
+  if (raw === "false" || raw === "0" || raw === "no") return false;
+  return null;
+}
+
+function normalizeReasoningEffort(rawValue) {
+  const raw = String(rawValue || "").trim().toLowerCase();
+  if (!raw || raw === "none") {
+    return null;
+  }
+  if (raw === "xhigh") {
+    console.warn("LLM_REASONING_EFFORT xhigh is not supported; using high.");
+    return "high";
+  }
+  if (["low", "medium", "high"].includes(raw)) {
+    return raw;
+  }
+  return null;
+}
+
+function normalizeTextVerbosity(rawValue) {
+  const raw = String(rawValue || "").trim().toLowerCase();
+  if (!raw) return null;
+  return ["low", "medium", "high"].includes(raw) ? raw : null;
+}
+
+function isGpt5Family(modelName) {
+  return /^gpt-5/i.test(modelName || "");
+}
+
+function isGpt52Family(modelName) {
+  return /^gpt-5\.2/i.test(modelName || "");
+}
+
+function isGpt52Pro(modelName) {
+  return /^gpt-5\.2-pro/i.test(modelName || "");
+}
+
+function isGpt51Family(modelName) {
+  return /^gpt-5\.1/i.test(modelName || "");
+}
+
+function isGpt5MiniOrNano(modelName) {
+  return /^gpt-5-(mini|nano)/i.test(modelName || "");
+}
+
+function shouldUseResponsesApi(modelName, override) {
+  if (override === true || override === false) {
+    return override;
+  }
+  return isGpt52Family(modelName);
+}
+
+function shouldApplyTemperature(modelName, reasoningEffort) {
+  if (!isGpt5Family(modelName)) {
+    return true;
+  }
+  if (isGpt52Pro(modelName)) {
+    return false;
+  }
+  if (isGpt5MiniOrNano(modelName)) {
+    return false;
+  }
+  if (isGpt52Family(modelName) || isGpt51Family(modelName)) {
+    return !reasoningEffort;
+  }
+  return false;
+}
+
+function isTemperatureUnsupportedError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return message.includes("unsupported parameter") && message.includes("temperature");
+}
+
+function normalizeModelName(rawModel) {
+  const normalized = String(rawModel || "").replace("openai:", "");
+  if (normalized.toLowerCase().includes("codex")) {
+    console.warn("Codex models are disabled; falling back to gpt-5.2.", {
+      requestedModel: normalized,
+    });
+    return "gpt-5.2";
+  }
+  if (normalized.toLowerCase() === "gpt-5.2-pro") {
+    console.warn("gpt-5.2-pro is disabled; falling back to gpt-5.2.", {
+      requestedModel: normalized,
+    });
+    return "gpt-5.2";
+  }
+  return normalized || "gpt-5.2";
+}
+
+function resolveLlmConfig(config) {
+  const fallbackModel =
+    process.env.LLM_MODEL_FIXED ||
+    process.env.LLM_MODEL ||
+    process.env.LLM_MODEL_LARGE ||
+    process.env.LLM_MODEL_SMALL ||
+    "gpt-5.2";
+  const fallbackTemp = Number(process.env.LLM_TEMPERATURE || "0.2");
+  const envUseResponses = parseBooleanEnv(process.env.LLM_USE_RESPONSES_API);
+  const textVerbosity = normalizeTextVerbosity(process.env.LLM_TEXT_VERBOSITY);
+
+  const sanitized = config && typeof config === "object" ? config : {};
+  const hasTemperature = Object.prototype.hasOwnProperty.call(
+    sanitized,
+    "temperature"
+  );
+  const hasReasoningEffort = Object.prototype.hasOwnProperty.call(
+    sanitized,
+    "reasoningEffort"
+  );
+  const rawModel =
+    sanitized.modelFixed ||
+    sanitized.model ||
+    sanitized.modelLarge ||
+    sanitized.modelSmall ||
+    fallbackModel;
+  const reasoningSource = hasReasoningEffort
+    ? sanitized.reasoningEffort
+    : process.env.LLM_REASONING_EFFORT;
+  const reasoningEffort = normalizeReasoningEffort(reasoningSource);
+
+  return {
+    temperature: hasTemperature
+      ? sanitized.temperature
+      : Number.isNaN(fallbackTemp)
+      ? 0.2
+      : fallbackTemp,
+    modelFixed: normalizeModelName(rawModel),
+    reasoningEffort,
+    textVerbosity,
+    useResponsesApi: envUseResponses,
+  };
+}
+
+function selectModelName(resolved) {
+  return resolved.modelFixed;
+}
+
+async function invokeResponsesApi({
+  modelName,
+  systemPrompt,
+  userPrompt,
+  responseFormat,
+  temperature,
+  maxTokens,
+  reasoningEffort,
+  textVerbosity,
+  runMeta,
+}) {
+  const client = getOpenAIClient();
+  const basePayload = {
+    model: modelName,
+    instructions: systemPrompt,
+    input: userPrompt,
+  };
+
+  if (typeof temperature === "number") {
+    basePayload.temperature = temperature;
+  }
+
+  if (typeof maxTokens === "number" && maxTokens > 0) {
+    basePayload.max_output_tokens = maxTokens;
+  }
+
+  if (reasoningEffort) {
+    basePayload.reasoning = { effort: reasoningEffort };
+  }
+
+  let payload = basePayload;
+  if (responseFormat || textVerbosity) {
+    payload = {
+      ...basePayload,
+      text: {
+        ...(responseFormat ? { format: responseFormat } : {}),
+        ...(textVerbosity ? { verbosity: textVerbosity } : {}),
+      },
+    };
+  }
+
+  let response;
+  try {
+    response = await client.responses.create(payload);
+  } catch (error) {
+    if (isTemperatureUnsupportedError(error) && "temperature" in basePayload) {
+      console.warn("Temperature rejected; retrying without it.", {
+        runMeta,
+        stage: "invoke_llm",
+        modelName,
+      });
+      const retryPayload = { ...payload };
+      delete retryPayload.temperature;
+      try {
+        response = await client.responses.create(retryPayload);
+      } catch (retryError) {
+        if (payload !== basePayload) {
+          console.warn("Responses API optional settings failed; retrying without them.", {
+            runMeta,
+            stage: "invoke_llm",
+          });
+          const strippedPayload = { ...basePayload };
+          delete strippedPayload.temperature;
+          response = await client.responses.create(strippedPayload);
+        } else {
+          throw retryError;
+        }
+      }
+    } else if (payload !== basePayload) {
+      console.warn("Responses API optional settings failed; retrying without them.", {
+        runMeta,
+        stage: "invoke_llm",
+      });
+      response = await client.responses.create(basePayload);
+    } else {
+      throw error;
+    }
+  }
+
+  const tokenUsage = response?.usage
+    ? {
+        promptTokens: response.usage.input_tokens,
+        completionTokens: response.usage.output_tokens,
+        totalTokens: response.usage.total_tokens,
+      }
+    : null;
+
+  return {
+    content: response?.output_text || "",
+    tokenUsage,
+  };
 }
 
 async function validateInputNode(state) {
@@ -151,6 +380,7 @@ async function validateInputNode(state) {
     systemPrompt: state.systemPrompt,
     userPrompt: state.userPrompt,
     formInputs: normalizedFormInputs,
+    llmConfig: state.llmConfig,
     runMeta: state.runMeta,
   });
 
@@ -179,49 +409,132 @@ async function validateInputNode(state) {
 // Node 1: Invoke LLM
 async function invokeLLMNode(state) {
   try {
-    const modelName = selectModelName(state);
-    const temperature = Number(process.env.LLM_TEMPERATURE || "0.2");
+    const resolved = resolveLlmConfig(state.llmConfig);
+    const selectedModel = selectModelName(resolved);
+    const modelName = normalizeModelName(selectedModel);
+    const reasoningEffort = isGpt5Family(modelName)
+      ? resolved.reasoningEffort
+      : null;
+    const verbosity = resolved.textVerbosity;
+    const supportsTemperature = shouldApplyTemperature(
+      modelName,
+      reasoningEffort
+    );
+    const temperature =
+      supportsTemperature && typeof resolved.temperature === "number"
+        ? resolved.temperature
+        : null;
+    if (!supportsTemperature && typeof resolved.temperature === "number") {
+      console.warn("Temperature suppressed for model compatibility.", {
+        modelName,
+        reasoningEffort,
+      });
+    }
     const maxTokens = Number(process.env.LLM_MAX_TOKENS || "0");
     const outputGuard =
       "\n\nReturn only valid JSON. Do not include Markdown or code fences.";
     const responseFormat = getResponseFormat();
+    const useResponsesApi = shouldUseResponsesApi(
+      modelName,
+      resolved.useResponsesApi
+    );
 
-    const model = new ChatOpenAI({
-      modelName: modelName.replace("openai:", ""),
-      temperature,
-      maxTokens: maxTokens > 0 ? maxTokens : undefined,
-      openAIApiKey: process.env.OPENAI_API_KEY,
-    });
+    const systemPrompt = `${state.systemPrompt}${outputGuard}`;
+    const userPrompt = interpolatePrompt(state.userPrompt, state.formInputs);
 
+    if (useResponsesApi) {
+      const response = await invokeResponsesApi({
+        modelName,
+        systemPrompt,
+        userPrompt,
+        responseFormat,
+        temperature: supportsTemperature ? resolved.temperature : null,
+        maxTokens,
+        reasoningEffort,
+        textVerbosity: verbosity,
+        runMeta: state.runMeta,
+      });
+
+      return {
+        ...state,
+        rawOutput: response.content,
+        tokenUsage: response.tokenUsage,
+        modelName,
+        temperature,
+        error: null,
+        stage: "invoke_llm",
+      };
+    }
+
+    const makeChatModel = (withTemperature) =>
+      new ChatOpenAI({
+        modelName,
+        temperature: withTemperature ? resolved.temperature : undefined,
+        maxTokens: maxTokens > 0 ? maxTokens : undefined,
+        reasoningEffort: reasoningEffort || undefined,
+        openAIApiKey: process.env.OPENAI_API_KEY,
+      });
+
+    let model = makeChatModel(supportsTemperature);
     const messages = [
-      { role: "system", content: `${state.systemPrompt}${outputGuard}` },
+      { role: "system", content: systemPrompt },
       {
         role: "user",
-        content: interpolatePrompt(state.userPrompt, state.formInputs),
+        content: userPrompt,
       },
     ];
+
+    const invokeChat = async (options) => {
+      if (options) {
+        return model.invoke(messages, options);
+      }
+      return model.invoke(messages);
+    };
 
     let response;
     if (responseFormat) {
       try {
-        response = await model.invoke(messages, {
-          response_format: responseFormat,
-        });
+        response = await invokeChat({ response_format: responseFormat });
       } catch (error) {
-        console.warn("response_format failed; retrying without it.", {
-          runMeta: state.runMeta,
-          stage: "invoke_llm",
-        });
-        response = await model.invoke(messages);
+        if (isTemperatureUnsupportedError(error) && supportsTemperature) {
+          console.warn("Temperature rejected; retrying without it.", {
+            runMeta: state.runMeta,
+            stage: "invoke_llm",
+            modelName,
+          });
+          model = makeChatModel(false);
+          response = await invokeChat({ response_format: responseFormat });
+        } else {
+          console.warn("response_format failed; retrying without it.", {
+            runMeta: state.runMeta,
+            stage: "invoke_llm",
+          });
+          response = await invokeChat();
+        }
       }
     } else {
-      response = await model.invoke(messages);
+      try {
+        response = await invokeChat();
+      } catch (error) {
+        if (isTemperatureUnsupportedError(error) && supportsTemperature) {
+          console.warn("Temperature rejected; retrying without it.", {
+            runMeta: state.runMeta,
+            stage: "invoke_llm",
+            modelName,
+          });
+          model = makeChatModel(false);
+          response = await invokeChat();
+        } else {
+          throw error;
+        }
+      }
     }
+
     const tokenUsage =
       response?.response_metadata?.tokenUsage ||
       response?.usage_metadata ||
       null;
-    
+
     let content = "";
     if (response && typeof response === "object" && "content" in response) {
       const responseContent = response.content;
@@ -337,6 +650,7 @@ function buildScanGraph() {
       systemPrompt: { value: (x, y) => y ?? x ?? null },
       userPrompt: { value: (x, y) => y ?? x ?? null },
       formInputs: { value: (x, y) => y ?? x ?? null },
+      llmConfig: { value: (x, y) => y ?? x ?? null },
       rawOutput: { value: (x, y) => y ?? x ?? null },
       parsedOutput: { value: (x, y) => y ?? x ?? null },
       validatedOutput: { value: (x, y) => y ?? x ?? null },
@@ -378,7 +692,13 @@ function buildScanGraph() {
 }
 
 // Main function to run the scan agent
-async function runScanAgent({ systemPrompt, userPrompt, formInputs, runMeta }) {
+async function runScanAgent({
+  systemPrompt,
+  userPrompt,
+  formInputs,
+  runMeta,
+  llmConfig,
+}) {
   ensureOpenAIKey();
   const graph = buildScanGraph();
   
@@ -386,6 +706,7 @@ async function runScanAgent({ systemPrompt, userPrompt, formInputs, runMeta }) {
     systemPrompt,
     userPrompt,
     formInputs,
+    llmConfig: llmConfig || null,
     runMeta: runMeta || null,
     rawOutput: null,
     parsedOutput: null,

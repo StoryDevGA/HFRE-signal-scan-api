@@ -37,14 +37,20 @@ Required:
 - `ADMIN_PASSWORD_HASH` (bcrypt hash)
 
 LLM configuration:
-- `LLM_MODEL_SMALL` (default: `gpt-4o-mini`)
-- `LLM_MODEL_LARGE` (default: `gpt-4o`)
-- `LLM_LARGE_THRESHOLD` (character count; default: `6000`)
-- `LLM_MODEL` (fallback for small model if `LLM_MODEL_SMALL` is unset)
-- `LLM_TEMPERATURE` (default: `0.2`)
+- `LLM_MODEL` (default: `gpt-5.2`) (fallback if no admin config)
+- `LLM_MODEL_FIXED` (optional; overrides `LLM_MODEL`)
+- `LLM_TEMPERATURE` (default: `0.2`, range `0.0`-`2.0`) (fallback if no admin config)
 - `LLM_MAX_TOKENS` (optional; 0 disables maxTokens)
 - `LLM_RESPONSE_FORMAT` (`json` or `json_object` to enable strict JSON mode)
+- `LLM_USE_RESPONSES_API` (`true|false`; defaults to `true` for `gpt-5.2*`)
+- `LLM_REASONING_EFFORT` (`none|low|medium|high|xhigh`; `xhigh` coerces to `high`)
+- `LLM_TEXT_VERBOSITY` (`low|medium|high`; used with Responses API)
 - `LLM_TIMEOUT_MS` (default: `60000`)
+
+Note: codex models are intentionally disabled; any `*codex*` model name is replaced with `gpt-5.2`.
+Note: `gpt-5.2-pro` is blocked in admin config and is coerced to `gpt-5.2` if found in env.
+Note: for GPT-5.2 and GPT-5.1, `LLM_TEMPERATURE` is applied only when `LLM_REASONING_EFFORT` is unset or `none`.
+Note: for GPT-5.2-pro and older GPT-5 models (for example, `gpt-5-mini`, `gpt-5-nano`), temperature is suppressed to avoid API errors.
 
 Other:
 - `PENDING_RETRY_MS` (default: `60000`)
@@ -191,6 +197,30 @@ Fields:
 Common actions:
 - `prompt.create`, `prompt.update`, `prompt.delete`, `prompt.publish`
 
+#### `llmConfig`
+Stores the global active LLM configuration set by admins.
+
+Fields:
+- `key`: `global` (unique identifier for the single config)
+- `mode`: `fixed`
+- `temperature` (number; `0.0` .. `2.0`, or `null` to disable)
+- `reasoningEffort` (`none|low|medium|high|xhigh`, or `null` to disable; `xhigh` coerced to `high` at runtime)
+- `modelFixed` (string; used when mode=fixed)
+- `updatedBy` (admin email)
+- `createdAt`, `updatedAt` (auto-managed by Mongoose timestamps)
+
+Notes:
+- If no `llmConfig` document exists, the system falls back to `.env` values.
+- If `temperature` is `null`, the backend does not apply temperature (even if `LLM_TEMPERATURE` is set).
+- If `reasoningEffort` is `null`, the backend does not apply reasoning (even if `LLM_REASONING_EFFORT` is set).
+- For GPT-5.2 and GPT-5.1, temperature is applied only when `reasoningEffort` is `none` or `null`.
+- For GPT-5-mini, GPT-5-nano, and older GPT-5 models, temperature is always suppressed.
+- Auto mode is removed; the system always uses a fixed model.
+- Only one `llmConfig` document should exist (keyed by `key: "global"`).
+- Allowed models (strict): `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`,
+  `gpt-5.1`, `gpt-4.1`, `gpt-4o-mini`, `gpt-4o`.
+- `gpt-5.2-pro` is explicitly blocked and coerced to `gpt-5.2` if found in env.
+
 ---
 
 ## 5. Admin Authentication (Hard Constraint)
@@ -230,7 +260,7 @@ Security notes:
    - Load published system + user prompt from `prompts`
    - Interpolate form inputs into the user message template
    - Invoke the LangGraph scan agent (validate input -> invoke -> parse -> validate -> handle error)
-   - Model selection is dynamic (small vs large) based on input size threshold
+   - Model selection uses the fixed model from config/env
 4) Validate LLM output JSON (inside the agent graph):
    - If valid:
      - Persist to `submission.outputs`
@@ -371,9 +401,55 @@ Aggregates:
 #### `GET /api/admin/analytics/:submissionId`
 Returns telemetry record for that submission.
 
+### 8.7 Admin LLM Config
+
+#### `GET /api/admin/llm-config`
+Returns the active LLM configuration (or fallback indicator if not set).
+
+Response:
+```
+200
+{
+  "mode": "fixed",
+  "temperature": 0.2,
+  "reasoningEffort": "none",
+  "modelFixed": "gpt-5.2",
+  "updatedBy": "admin@example.com",
+  "source": "db"
+}
+```
+
+#### `PUT /api/admin/llm-config`
+Creates or updates the single global config.
+
+Request:
+```
+PUT /api/admin/llm-config
+Content-Type: application/json
+{
+  "mode": "fixed",
+  "temperature": 0.2,
+  "reasoningEffort": "none",
+  "modelFixed": "gpt-5.2"
+}
+```
+
+Notes:
+- When `mode=fixed`, `modelFixed` is required.
+- Models must be one of: `gpt-5.2`, `gpt-5-mini`, `gpt-5-nano`,
+  `gpt-5.1`, `gpt-4.1`, `gpt-4o-mini`, `gpt-4o`.
+- `gpt-5.2-pro` is not allowed for admin configuration (returns 400).
+- Temperature range: `0.0` to `2.0` (or `null`).
+- `reasoningEffort` must be one of: `none`, `low`, `medium`, `high`, `xhigh`, or `null`.
+- `xhigh` is coerced to `high` at runtime.
+- For GPT-5.2/5.1: temperature is suppressed when reasoning is active (not `none`).
+- For GPT-5-mini/nano and older GPT-5 models: temperature is always suppressed.
+- All updates are audited (`llmConfig.update`).
+- Auto mode is disabled.
+
 ---
 
-## 8.7 Frontend Contract (Use This)
+## 8.8 Frontend Contract (Use This)
 
 ### Base URL
 - Local dev: `http://localhost:8000`
@@ -668,7 +744,7 @@ Response:
 
 ---
 
-## 8.8 React (JS) Example
+## 8.9 React (JS) Example
 
 ```jsx
 import { useEffect, useState } from "react";
@@ -807,6 +883,7 @@ Current behavior:
 - LLM model and temperature used are stored per submission.
 - Admin auth restricted to allowlist (max 3 emails) and fixed hashed password.
 - Admin endpoints support: view outcomes, prompt CRUD, delete user data, view analytics.
+- Admins can manage a single global LLM config (model + temperature + reasoning) with audit logging.
 
 ## 13. Prompt Editing Checklist (Avoid “Inconclusive” Failures)
 
@@ -815,6 +892,9 @@ Current behavior:
 - Avoid instructions that require browsing or “visible evidence” unless you add retrieval.
 - Ensure the user prompt injects form inputs (e.g., `{{$form.company_name}}`, `{{$form.product_name}}`).
 - Do not forbid inference entirely; allow reasonable inference from provided inputs.
+
+
+
 
 
 

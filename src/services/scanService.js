@@ -1,5 +1,6 @@
 const { Submission } = require("../models");
 const { getPublishedPrompt } = require("./promptService");
+const { getLlmConfigWithFallback } = require("./llmConfigService");
 const { runScanAgent } = require("./scanAgent");
 const { sendCustomerEmail, sendOwnerEmail } = require("./emailService");
 
@@ -143,11 +144,13 @@ async function processSubmission(submissionId) {
     }
 
     const llmStart = Date.now();
+    const llmConfig = await getLlmConfigWithFallback();
     const result = await runScanAgentWithTimeout({
       systemPrompt: systemPrompt.content,
       userPrompt: userPrompt.content,
       formInputs: submission.inputs,
       runMeta: { submissionId: String(submission._id) },
+      llmConfig,
     });
     submission.processing.llmDurationMs = Date.now() - llmStart;
     submission.processing.llmModel = result?.modelName || null;
