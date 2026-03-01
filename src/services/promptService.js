@@ -190,24 +190,24 @@ async function updatePrompt(id, updates, actorEmail) {
 
   let hasChanges = false;
 
-  if (updates.label) {
+  if (typeof updates.label === "string" && updates.label !== prompt.label) {
     prompt.label = updates.label;
     prompt.name = buildPromptName(updates.label, prompt.ownerEmail, prompt.createdAt);
     hasChanges = true;
   }
 
-  if (updates.content && updates.content !== prompt.content) {
+  if (typeof updates.content === "string" && updates.content !== prompt.content) {
     ensureNoExampleOutput(updates.content);
     prompt.content = updates.content;
+    hasChanges = true;
+  }
+
+  if (hasChanges) {
     const currentVersion =
       typeof prompt.version === "number" && !Number.isNaN(prompt.version)
         ? prompt.version
         : 0;
     prompt.version = currentVersion + 0.5;
-    hasChanges = true;
-  }
-
-  if (hasChanges) {
     await prompt.save();
   }
 
